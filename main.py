@@ -44,12 +44,13 @@ if sys.stdout.encoding.lower() != 'utf-8':
 # Logging
 # ==========================================
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.DEBUG,
     format='%(asctime)s - %(levelname)s - %(message)s',
     datefmt='%H:%M:%S',
     handlers=[logging.StreamHandler(sys.stdout)]
 )
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.DEBUG)
 
 # ==========================================
 # Estado global compartido
@@ -241,22 +242,22 @@ HTML_PAGE = """<!DOCTYPE html>
 
   <div id="ranked-picks" style="display:none;">
     <div class="config-section-title">Tus picks en ranked</div>
-    <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-bottom:8px;">
-      <div style="background:#0f0f0f; border:1px solid #2a2a2a; border-radius:6px; padding:8px;">
-        <div style="font-size:0.65rem; color:#666; margin-bottom:4px; text-transform:uppercase;">Rol 1</div>
-        <div id="role-1-name" style="font-size:0.8rem; color:#7ec8e3; margin-bottom:6px; min-height:16px;">-</div>
-        <button id="role-1-champ" class="btn" style="width:100%; background:#2a3a5c; color:#999; padding:6px; border-radius:4px; border:1px solid #2a5c3a; font-size:0.7rem;" onclick="clickRole(0)">Elegir</button>
-      </div>
-      <div style="background:#0f0f0f; border:1px solid #2a2a2a; border-radius:6px; padding:8px;">
-        <div style="font-size:0.65rem; color:#666; margin-bottom:4px; text-transform:uppercase;">Rol 2</div>
-        <div id="role-2-name" style="font-size:0.8rem; color:#7ec8e3; margin-bottom:6px; min-height:16px;">-</div>
-        <button id="role-2-champ" class="btn" style="width:100%; background:#2a3a5c; color:#999; padding:6px; border-radius:4px; border:none; font-size:0.7rem;" onclick="clickRole(1)">Elegir</button>
-      </div>
+
+    <div style="background:#0f0f0f; border:1px solid #2a2a2a; border-radius:6px; padding:8px; margin-bottom:8px;">
+      <div style="font-size:0.7rem; color:#666; margin-bottom:4px; text-transform:uppercase;">Rol 1</div>
+      <div id="role-1-info" style="font-size:0.75rem; color:#7ec8e3; margin-bottom:6px;">- | -</div>
+      <button id="role-1-btn" class="btn" style="width:100%; background:#2a3a5c; color:#999; padding:6px; border-radius:4px; border:1px solid #2a5c3a; font-size:0.7rem;" onclick="abrirBuscador(0)">Elegir</button>
+      <input id="champ-search-0" class="search-box" placeholder="Buscar campeón..." onkeyup="buscarChampion(0)" style="display:none; margin-top:6px;">
+      <div id="search-results-0" class="search-results" style="display:none; margin-top:6px;"></div>
     </div>
-    <input id="champ-search-1" class="search-box" placeholder="Rol 1: buscar..." onkeyup="buscarChampion(0)" style="display:none; margin-bottom:6px;">
-    <div id="search-results-1" class="search-results" style="display:none; margin-bottom:8px;"></div>
-    <input id="champ-search-2" class="search-box" placeholder="Rol 2: buscar..." onkeyup="buscarChampion(1)" style="display:none; margin-bottom:6px;">
-    <div id="search-results-2" class="search-results" style="display:none;"></div>
+
+    <div style="background:#0f0f0f; border:1px solid #2a2a2a; border-radius:6px; padding:8px;">
+      <div style="font-size:0.7rem; color:#666; margin-bottom:4px; text-transform:uppercase;">Rol 2</div>
+      <div id="role-2-info" style="font-size:0.75rem; color:#7ec8e3; margin-bottom:6px;">- | -</div>
+      <button id="role-2-btn" class="btn" style="width:100%; background:#2a3a5c; color:#999; padding:6px; border-radius:4px; border:1px solid #2a5c3a; font-size:0.7rem;" onclick="abrirBuscador(1)">Elegir</button>
+      <input id="champ-search-1" class="search-box" placeholder="Buscar campeón..." onkeyup="buscarChampion(1)" style="display:none; margin-top:6px;">
+      <div id="search-results-1" class="search-results" style="display:none; margin-top:6px;"></div>
+    </div>
   </div>
 
   <div id="aram-info" style="display:none;">
@@ -298,8 +299,11 @@ HTML_PAGE = """<!DOCTYPE html>
 
 <script>
   let championsData = [];
-  let selectedRoleIndex = -1;
-  let roleNames = ["", ""];
+  let rolePos = ["", ""];
+  let rolePicks = {
+    0: {champ1: null, champ2: null},
+    1: {champ1: null, champ2: null}
+  };
 
   function poll() {
     fetch('/api/status').then(r => r.json()).then(d => {
@@ -334,8 +338,10 @@ HTML_PAGE = """<!DOCTYPE html>
 
         if (isRanked && d.posiciones) {
           const [role1, role2] = d.posiciones.split('/');
-          document.getElementById('role-1-btn').textContent = role1 || '?';
-          document.getElementById('role-2-btn').textContent = role2 || '?';
+          rolePos[0] = role1 || '-';
+          rolePos[1] = role2 || '-';
+          actualizarVistaRol(0);
+          actualizarVistaRol(1);
         }
 
         if (isAram && d.posiciones) {
@@ -395,9 +401,26 @@ HTML_PAGE = """<!DOCTYPE html>
     });
   }
 
+  function abrirBuscador(roleIdx) {
+    const searchId = 'champ-search-' + roleIdx;
+    const resultsId = 'search-results-' + roleIdx;
+    const searchEl = document.getElementById(searchId);
+    const resultsEl = document.getElementById(resultsId);
+
+    if (searchEl.style.display === 'none' || !searchEl.style.display) {
+      searchEl.style.display = 'block';
+      resultsEl.style.display = 'none';
+      searchEl.focus();
+    } else {
+      searchEl.style.display = 'none';
+      resultsEl.style.display = 'none';
+      searchEl.value = '';
+    }
+  }
+
   function buscarChampion(roleIdx) {
-    const searchId = 'champ-search-' + (roleIdx + 1);
-    const resultsId = 'search-results-' + (roleIdx + 1);
+    const searchId = 'champ-search-' + roleIdx;
+    const resultsId = 'search-results-' + roleIdx;
     const query = document.getElementById(searchId).value.toLowerCase();
     const resultsDiv = document.getElementById(resultsId);
 
@@ -416,18 +439,36 @@ HTML_PAGE = """<!DOCTYPE html>
     });
 
     resultsDiv.innerHTML = sorted.slice(0, 8).map(c =>
-      `<div class="search-result" onclick="selectChampion(${roleIdx}, ${c.id}, '${c.name}')">${c.name}</div>`
+      `<div class="search-result" onclick="selectChampion(${roleIdx}, '${c.name}')">${c.name}</div>`
     ).join('');
     resultsDiv.style.display = sorted.length > 0 ? 'block' : 'none';
   }
 
-  function selectChampion(roleIdx, champId, champName) {
-    roleNames[roleIdx] = champName;
-    document.getElementById('role-' + (roleIdx + 1) + '-name').textContent = champName;
-    document.getElementById('champ-search-' + (roleIdx + 1)).value = '';
-    document.getElementById('search-results-' + (roleIdx + 1)).style.display = 'none';
-    document.getElementById('champ-search-' + (roleIdx + 1)).style.display = 'none';
-    selectedRoleIndex = -1;
+  function selectChampion(roleIdx, champName) {
+    if (!rolePicks[roleIdx].champ1) {
+      rolePicks[roleIdx].champ1 = champName;
+    } else if (!rolePicks[roleIdx].champ2) {
+      rolePicks[roleIdx].champ2 = champName;
+    } else {
+      rolePicks[roleIdx].champ2 = champName;
+    }
+    actualizarVistaRol(roleIdx);
+    document.getElementById('champ-search-' + roleIdx).value = '';
+    document.getElementById('search-results-' + roleIdx).style.display = 'none';
+  }
+
+  function eliminarChampion(roleIdx, slot) {
+    if (slot === 1) rolePicks[roleIdx].champ1 = null;
+    else rolePicks[roleIdx].champ2 = null;
+    actualizarVistaRol(roleIdx);
+  }
+
+  function actualizarVistaRol(roleIdx) {
+    const picks = rolePicks[roleIdx];
+    const c1 = picks.champ1 ? `<span style="background:#2a5c3a; padding:2px 4px; border-radius:3px; position:relative;">${picks.champ1}<span style="cursor:pointer; margin-left:4px;" onclick="eliminarChampion(${roleIdx}, 1)">×</span></span>` : '-';
+    const c2 = picks.champ2 ? `<span style="background:#2a5c3a; padding:2px 4px; border-radius:3px; margin-left:4px; position:relative;">${picks.champ2}<span style="cursor:pointer; margin-left:4px;" onclick="eliminarChampion(${roleIdx}, 2)">×</span></span>` : '';
+    const pos = rolePos[roleIdx] || '-';
+    document.getElementById('role-' + (roleIdx + 1) + '-info').innerHTML = `${pos} | ${c1} ${c2}`;
   }
 
   async function cargarConfig() {
@@ -510,6 +551,8 @@ app = Flask(__name__)
 @app.route('/')
 def index():
     web_config["ultimo_acceso"] = time.time()
+    client_ip = request.remote_addr
+    logger.info(f"📱 Acceso web desde: {client_ip}")
     resp = make_response(HTML_PAGE)
     resp.headers['Content-Type'] = 'text/html; charset=utf-8'
     return resp
@@ -517,7 +560,9 @@ def index():
 @app.route('/api/status')
 def api_status():
     web_config["ultimo_acceso"] = time.time()
-    return jsonify({**estado_partida, "velocidad_maxima": web_config["velocidad_maxima"]})
+    data = {**estado_partida, "velocidad_maxima": web_config["velocidad_maxima"]}
+    logger.debug(f"📊 Status request: estado={estado_partida['estado']}, encontrada={estado_partida['encontrada']}")
+    return jsonify(data)
 
 @app.route('/api/accion/<tipo>', methods=['POST'])
 def api_accion(tipo):
@@ -594,8 +639,8 @@ CHAMPIONS_HARDCODED = [
 @app.route('/api/champions', methods=['GET'])
 def api_champions():
     web_config["ultimo_acceso"] = time.time()
+    logger.debug(f"🏆 Champions request desde {request.remote_addr}")
 
-    # Intentar traer desde LCU
     if lcu_conn["port"] and lcu_conn["token"]:
         try:
             creds = base64.b64encode(f"riot:{lcu_conn['token']}".encode()).decode()
@@ -609,11 +654,12 @@ def api_champions():
             if r.status_code == 200:
                 champs = r.json()
                 lista = [{"id": c.get("id"), "name": c.get("name")} for c in champs if "id" in c and "name" in c]
+                logger.debug(f"   Usando {len(lista)} campeones de LCU")
                 return jsonify(sorted(lista, key=lambda x: x["name"]))
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"   LCU error: {e}, usando fallback")
 
-    # Fallback: lista hardcodeada
+    logger.debug(f"   Usando {len(CHAMPIONS_HARDCODED)} campeones (hardcoded)")
     return jsonify(sorted(CHAMPIONS_HARDCODED, key=lambda x: x["name"]))
 
 def get_local_ip():
