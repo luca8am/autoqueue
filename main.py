@@ -1165,18 +1165,20 @@ async def disconnect(connection):
 @connector.ws.register('/lol-gameflow/v1/gameflow-phase', event_types=('UPDATE',))
 async def on_gameflow_phase(connection, event):
     fase = event.data
+    logger.info(f"[WS Phase] Nueva fase: {fase}")
     _actualizar_fase(fase)
     if fase == "Lobby":
         try:
             r = await connection.request('get', '/lol-lobby/v2/lobby')
             data = await r.json()
-            logger.debug(f"[Gameflow] Lobby data obtenida, llamando _procesar_lobby")
+            logger.info(f"[WS Phase] Obtuve datos de lobby, procesando...")
             _procesar_lobby(data)
         except Exception as e:
-            logger.error(f"[Gameflow] Error obteniendo lobby: {e}")
+            logger.error(f"[WS Phase] Error: {e}")
 
 @connector.ws.register('/lol-lobby/v2/lobby', event_types=('UPDATE',))
 async def on_lobby_update(connection, event):
+    logger.info(f"[WS Lobby] Update recibido")
     if estado_partida["fase"] is None:
         try:
             r = await connection.request('get', '/lol-gameflow/v1/gameflow-phase')
@@ -1186,16 +1188,22 @@ async def on_lobby_update(connection, event):
             pass
 
     if estado_partida["fase"] == "Lobby":
-        _procesar_lobby(event.data)
+        logger.info(f"[WS Lobby] En fase Lobby, procesando event.data...")
+        try:
+            _procesar_lobby(event.data)
+        except Exception as e:
+            logger.error(f"[WS Lobby] Error en _procesar_lobby: {e}")
 
 @connector.ws.register('/lol-champ-select/v1/session', event_types=('UPDATE',))
 async def on_champ_select(connection, event):
+    logger.debug(f"[WS ChampSelect] Update recibido")
     data = event.data
     champ_select_state["local_cell_id"] = data.get("localPlayerCellId")
     action_id = _detectar_turno_ban(data)
     if action_id:
         champion_id = _elegir_campeon_ban(data)
         if champion_id:
+            logger.info(f"[WS ChampSelect] Auto-baneando campeón {champion_id}")
             await _ejecutar_ban_ws(connection, action_id, champion_id)
 
 
