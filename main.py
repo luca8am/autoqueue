@@ -598,7 +598,6 @@ def index():
 def api_status():
     web_config["ultimo_acceso"] = time.time()
     data = {**estado_partida, "velocidad_maxima": web_config["velocidad_maxima"]}
-    logger.debug(f"📊 Status request: estado={estado_partida['estado']}, encontrada={estado_partida['encontrada']}")
     return jsonify(data)
 
 @app.route('/api/accion/<tipo>', methods=['POST'])
@@ -676,7 +675,6 @@ CHAMPIONS_HARDCODED = [
 @app.route('/api/champions', methods=['GET'])
 def api_champions():
     web_config["ultimo_acceso"] = time.time()
-    logger.debug(f"🏆 Champions request desde {request.remote_addr}")
 
     if lcu_conn["port"] and lcu_conn["token"]:
         try:
@@ -691,12 +689,10 @@ def api_champions():
             if r.status_code == 200:
                 champs = r.json()
                 lista = [{"id": c.get("id"), "name": c.get("name")} for c in champs if "id" in c and "name" in c]
-                logger.debug(f"   Usando {len(lista)} campeones de LCU")
                 return jsonify(sorted(lista, key=lambda x: x["name"]))
-        except Exception as e:
-            logger.debug(f"   LCU error: {e}, usando fallback")
+        except Exception:
+            pass
 
-    logger.debug(f"   Usando {len(CHAMPIONS_HARDCODED)} campeones (hardcoded)")
     return jsonify(sorted(CHAMPIONS_HARDCODED, key=lambda x: x["name"]))
 
 def get_local_ip():
@@ -984,9 +980,12 @@ def _resetear_estado_lobby():
     champ_select_state.update({"local_cell_id": None, "action_id_ban": None})
 
 def _procesar_lobby(data):
+    logger.debug(f"[Lobby] Procesando datos: {data.keys() if isinstance(data, dict) else type(data)}")
+
     modo = data.get("gameConfig", {}).get("gameMode", "")
     queue_id = data.get("gameConfig", {}).get("queueId", 0)
     estado_partida["modo_juego"] = modo
+    logger.debug(f"[Lobby] Modo: {modo}, Queue: {queue_id}")
 
     QUEUE_NAMES = {
         0: "Práctica",
@@ -1035,6 +1034,8 @@ def _procesar_lobby(data):
         estado_partida["posiciones"] = "Espera en champ select"
     else:
         estado_partida["posiciones"] = None
+
+    logger.debug(f"[Lobby] Resultado: tipo_queue={estado_partida['tipo_queue']}, posiciones={estado_partida['posiciones']}, miembros={len(estado_partida['miembros_lobby'])}")
 
 def _detectar_turno_ban(data):
     local_cell = data.get("localPlayerCellId")
@@ -1169,9 +1170,10 @@ async def on_gameflow_phase(connection, event):
         try:
             r = await connection.request('get', '/lol-lobby/v2/lobby')
             data = await r.json()
+            logger.debug(f"[Gameflow] Lobby data obtenida, llamando _procesar_lobby")
             _procesar_lobby(data)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.error(f"[Gameflow] Error obteniendo lobby: {e}")
 
 @connector.ws.register('/lol-lobby/v2/lobby', event_types=('UPDATE',))
 async def on_lobby_update(connection, event):
