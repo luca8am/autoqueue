@@ -306,7 +306,10 @@ HTML_PAGE = """<!DOCTYPE html>
   };
 
   function poll() {
-    fetch('/api/status').then(r => r.json()).then(d => {
+    fetch('/api/status').then(r => {
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      return r.json();
+    }).then(d => {
       const el = document.getElementById('estado-text');
       const dot = document.getElementById('dot');
       const act = document.getElementById('actions');
@@ -361,7 +364,9 @@ HTML_PAGE = """<!DOCTYPE html>
       } else {
         infoCard.style.display = 'none';
       }
-    }).catch(() => {});
+    }).catch(e => {
+      console.error('[Poll] Error:', e);
+    });
   }
 
   function accion(tipo) {
@@ -379,18 +384,25 @@ HTML_PAGE = """<!DOCTYPE html>
   async function cargarChampions() {
     try {
       const r = await fetch('/api/champions');
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
       championsData = await r.json();
+      console.log(`[Champions] Cargados ${championsData.length} campeones`);
       llenarSelectores();
     } catch (e) {
-      console.error('Error:', e);
+      console.error('[Champions] Error:', e);
+      championsData = [];
     }
   }
 
   function llenarSelectores() {
     const roles = ['ban-1', 'ban-2', 'pick-TOP', 'pick-JGL', 'pick-MID', 'pick-ADC', 'pick-SUP'];
+    let count = 0;
     roles.forEach(id => {
       const sel = document.getElementById(id);
-      if (!sel) return;
+      if (!sel) {
+        console.warn(`[Selectores] No encontrado: ${id}`);
+        return;
+      }
       sel.innerHTML = '<option value="0">---</option>';
       championsData.forEach(c => {
         const opt = document.createElement('option');
@@ -398,7 +410,9 @@ HTML_PAGE = """<!DOCTYPE html>
         opt.textContent = c.name.substring(0, 12);
         sel.appendChild(opt);
       });
+      count++;
     });
+    console.log(`[Selectores] Llenados ${count} selectores`);
   }
 
   function abrirBuscador(roleIdx) {
@@ -476,14 +490,18 @@ HTML_PAGE = """<!DOCTYPE html>
 
   async function cargarConfig() {
     try {
-      const cfg = await (await fetch('/api/config')).json();
+      const r = await fetch('/api/config');
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const cfg = await r.json();
       document.getElementById('ban-1').value = cfg.bans?.ban1 || 0;
       document.getElementById('ban-2').value = cfg.bans?.ban2 || 0;
       ['TOP', 'JGL', 'MID', 'ADC', 'SUP'].forEach(r => {
-        document.getElementById('pick-' + r).value = cfg.picks?.[r] || 0;
+        const el = document.getElementById('pick-' + r);
+        if (el) el.value = cfg.picks?.[r] || 0;
       });
+      console.log('[Config] Cargada');
     } catch (e) {
-      console.error('Error:', e);
+      console.error('[Config] Error:', e);
     }
   }
 
@@ -531,16 +549,32 @@ HTML_PAGE = """<!DOCTYPE html>
   }
 
   async function inicializar() {
-    await cargarChampions();
-    await cargarConfig();
-    const content = document.getElementById('config-content');
-    const toggle = document.getElementById('config-toggle');
-    content.classList.add('open');
-    toggle.textContent = '▲';
+    try {
+      console.log('[Init] Cargando campeones...');
+      await cargarChampions();
+      console.log('[Init] Campeones cargados');
+
+      console.log('[Init] Cargando config...');
+      await cargarConfig();
+      console.log('[Init] Config cargada');
+
+      const content = document.getElementById('config-content');
+      const toggle = document.getElementById('config-toggle');
+      if (content && toggle) {
+        content.classList.add('open');
+        toggle.textContent = '▲';
+      }
+      console.log('[Init] OK');
+    } catch (e) {
+      console.error('[Init] ERROR:', e);
+    }
   }
 
-  inicializar();
-  poll();
+  window.addEventListener('load', () => {
+    console.log('[App] Página cargada');
+    inicializar();
+    poll();
+  });
   setInterval(poll, 1500);
 </script>
 </body>
