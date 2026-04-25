@@ -1104,7 +1104,7 @@ connector = Connector()
 
 @connector.ready
 async def connect(connection):
-    logger.info("Cliente conectado (lcu-driver + WebSocket).")
+    logger.info("✓ Cliente conectado (lcu-driver + WebSocket)")
     estado_partida["estado"] = "Buscando partida"
     estado_partida["nivel_conexion"] = "lcu-driver + WebSocket"
     try:
@@ -1115,9 +1115,12 @@ async def connect(connection):
 
         r = await connection.request('get', '/lol-gameflow/v1/gameflow-phase')
         data = await r.json()
+        logger.info(f"  Fase inicial: {data}")
         _actualizar_fase(data)
 
+        logger.info("  Iniciando polling loop...")
         asyncio.create_task(_polling_lobby_loop(connection))
+        logger.info("  Polling loop creado")
     except Exception as e:
         logger.error(f"Error en connect: {e}")
 
@@ -1164,18 +1167,28 @@ async def match_found(connection, event):
 
 async def _polling_lobby_loop(connection):
     """Polling periódico de lobby y champ-select (fallback para WebSocket)"""
+    logger.info("[Polling] Loop iniciado")
+    conteo = 0
     while True:
         await asyncio.sleep(2.0)
+        conteo += 1
+
         try:
-            if estado_partida["fase"] == "Lobby" and time.time() - _last_lobby_update > 3.0:
-                r = await connection.request('get', '/lol-lobby/v2/lobby')
-                data = await r.json()
-                _procesar_lobby(data)
-        except Exception:
-            pass
+            if estado_partida["fase"] == "Lobby":
+                if conteo % 3 == 0:
+                    logger.debug(f"[Polling] Lobby check {conteo}: última actualización hace {time.time() - _last_lobby_update:.1f}s")
+                if time.time() - _last_lobby_update > 3.0:
+                    logger.info(f"[Polling] Obteniendo /lol-lobby/v2/lobby...")
+                    r = await connection.request('get', '/lol-lobby/v2/lobby')
+                    data = await r.json()
+                    logger.info(f"[Polling] Datos obtenidos, procesando...")
+                    _procesar_lobby(data)
+        except Exception as e:
+            logger.error(f"[Polling Lobby] Error: {e}")
 
         try:
             if estado_partida["fase"] == "ChampSelect" and time.time() - _last_champ_select_update > 2.0:
+                logger.info(f"[Polling] Obteniendo /lol-champ-select/v1/session...")
                 r = await connection.request('get', '/lol-champ-select/v1/session')
                 data = await r.json()
                 champ_select_state["local_cell_id"] = data.get("localPlayerCellId")
@@ -1183,9 +1196,10 @@ async def _polling_lobby_loop(connection):
                 if action_id:
                     champion_id = _elegir_campeon_ban(data)
                     if champion_id:
+                        logger.info(f"[Polling] Auto-baneando {champion_id}")
                         await _ejecutar_ban_ws(connection, action_id, champion_id)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.error(f"[Polling ChampSelect] Error: {e}")
 
 @connector.close
 async def disconnect(connection):
