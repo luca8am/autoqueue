@@ -1112,6 +1112,8 @@ async def connect(connection):
         r = await connection.request('get', '/lol-gameflow/v1/gameflow-phase')
         data = await r.json()
         _actualizar_fase(data)
+
+        asyncio.create_task(_polling_lobby_loop(connection))
     except Exception as e:
         logger.error(f"Error en connect: {e}")
 
@@ -1156,6 +1158,31 @@ async def match_found(connection, event):
         await asyncio.sleep(0.5)
         estado_partida["bloqueo_aceptacion"] = False
 
+async def _polling_lobby_loop(connection):
+    """Polling periódico de lobby y champ-select (fallback para WebSocket)"""
+    while True:
+        await asyncio.sleep(2.0)
+        try:
+            if estado_partida["fase"] == "Lobby" and time.time() - _last_lobby_update > 3.0:
+                r = await connection.request('get', '/lol-lobby/v2/lobby')
+                data = await r.json()
+                _procesar_lobby(data)
+        except Exception:
+            pass
+
+        try:
+            if estado_partida["fase"] == "ChampSelect" and time.time() - _last_champ_select_update > 2.0:
+                r = await connection.request('get', '/lol-champ-select/v1/session')
+                data = await r.json()
+                champ_select_state["local_cell_id"] = data.get("localPlayerCellId")
+                action_id = _detectar_turno_ban(data)
+                if action_id:
+                    champion_id = _elegir_campeon_ban(data)
+                    if champion_id:
+                        await _ejecutar_ban_ws(connection, action_id, champion_id)
+        except Exception:
+            pass
+
 @connector.close
 async def disconnect(connection):
     logger.info("Cliente cerrado.")
@@ -1164,47 +1191,40 @@ async def disconnect(connection):
 
 @connector.ws.register('/lol-gameflow/v1/gameflow-phase', event_types=('UPDATE',))
 async def on_gameflow_phase(connection, event):
-    fase = event.data
-    logger.info(f"[WS Phase] Nueva fase: {fase}")
-    _actualizar_fase(fase)
-    if fase == "Lobby":
-        try:
-            r = await connection.request('get', '/lol-lobby/v2/lobby')
-            data = await r.json()
-            logger.info(f"[WS Phase] Obtuve datos de lobby, procesando...")
-            _procesar_lobby(data)
-        except Exception as e:
-            logger.error(f"[WS Phase] Error: {e}")
+    try:
+        fase = event.data
+        logger.info(f"[Fase] {fase}")
+        _actualizar_fase(fase)
+    except Exception as e:
+        logger.error(f"[Fase] Error: {e}")
+
+_last_lobby_update = 0.0
+_last_champ_select_update = 0.0
 
 @connector.ws.register('/lol-lobby/v2/lobby', event_types=('UPDATE',))
-async def on_lobby_update(connection, event):
-    logger.info(f"[WS Lobby] Update recibido")
-    if estado_partida["fase"] is None:
-        try:
-            r = await connection.request('get', '/lol-gameflow/v1/gameflow-phase')
-            fase = await r.json()
-            _actualizar_fase(fase)
-        except Exception:
-            pass
-
-    if estado_partida["fase"] == "Lobby":
-        logger.info(f"[WS Lobby] En fase Lobby, procesando event.data...")
-        try:
-            _procesar_lobby(event.data)
-        except Exception as e:
-            logger.error(f"[WS Lobby] Error en _procesar_lobby: {e}")
+async def on_lobby_update_ws(connection, event):
+    global _last_lobby_update
+    _last_lobby_update = time.time()
+    try:
+        _procesar_lobby(event.data)
+    except Exception as e:
+        logger.debug(f"[Lobby WS] Error: {e}")
 
 @connector.ws.register('/lol-champ-select/v1/session', event_types=('UPDATE',))
 async def on_champ_select(connection, event):
-    logger.debug(f"[WS ChampSelect] Update recibido")
-    data = event.data
-    champ_select_state["local_cell_id"] = data.get("localPlayerCellId")
-    action_id = _detectar_turno_ban(data)
-    if action_id:
-        champion_id = _elegir_campeon_ban(data)
-        if champion_id:
-            logger.info(f"[WS ChampSelect] Auto-baneando campeón {champion_id}")
-            await _ejecutar_ban_ws(connection, action_id, champion_id)
+    global _last_champ_select_update
+    _last_champ_select_update = time.time()
+    try:
+        data = event.data
+        champ_select_state["local_cell_id"] = data.get("localPlayerCellId")
+        action_id = _detectar_turno_ban(data)
+        if action_id:
+            champion_id = _elegir_campeon_ban(data)
+            if champion_id:
+                logger.info(f"[Ban Auto] Baneando {champion_id}")
+                await _ejecutar_ban_ws(connection, action_id, champion_id)
+    except Exception as e:
+        logger.debug(f"[ChampSelect] Error: {e}")
 
 
 # ==========================================
