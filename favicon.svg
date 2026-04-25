@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <defs>
+    <style>
+      .bg { fill: #111; }
+      .dot { fill: #4caf50; }
+      .accent { fill: #2a5c3a; }
+    </style>
+  </defs>
+  <rect width="64" height="64" class="bg"/>
+  <circle cx="32" cy="32" r="28" class="accent" opacity="0.3"/>
+  <circle cx="32" cy="32" r="20" class="accent"/>
+  <circle cx="32" cy="32" r="12" class="dot"/>
+</svg>

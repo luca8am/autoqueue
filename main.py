@@ -124,6 +124,7 @@ HTML_PAGE = """<!DOCTYPE html>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <title>AutoQueue</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><rect width='64' height='64' fill='%23111'/><circle cx='32' cy='32' r='28' fill='%232a5c3a' opacity='0.3'/><circle cx='32' cy='32' r='20' fill='%232a5c3a'/><circle cx='32' cy='32' r='12' fill='%234caf50'/></svg>" type="image/svg+xml">
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body {
@@ -240,12 +241,22 @@ HTML_PAGE = """<!DOCTYPE html>
 
   <div id="ranked-picks" style="display:none;">
     <div class="config-section-title">Tus picks en ranked</div>
-    <div style="display:flex; gap:6px; margin-bottom:8px;">
-      <button id="role-1-btn" class="btn" style="flex:1; background:#2a3a5c; color:#7ec8e3; padding:6px; border-radius:4px; border:2px solid #2a5c3a; font-size:0.7rem;" onclick="selectRole(0)">-</button>
-      <button id="role-2-btn" class="btn" style="flex:1; background:#2a3a5c; color:#999; padding:6px; border-radius:4px; border:none; font-size:0.7rem;" onclick="selectRole(1)">-</button>
+    <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-bottom:8px;">
+      <div style="background:#0f0f0f; border:1px solid #2a2a2a; border-radius:6px; padding:8px;">
+        <div style="font-size:0.65rem; color:#666; margin-bottom:4px; text-transform:uppercase;">Rol 1</div>
+        <div id="role-1-name" style="font-size:0.8rem; color:#7ec8e3; margin-bottom:6px; min-height:16px;">-</div>
+        <button id="role-1-champ" class="btn" style="width:100%; background:#2a3a5c; color:#999; padding:6px; border-radius:4px; border:1px solid #2a5c3a; font-size:0.7rem;" onclick="clickRole(0)">Elegir</button>
+      </div>
+      <div style="background:#0f0f0f; border:1px solid #2a2a2a; border-radius:6px; padding:8px;">
+        <div style="font-size:0.65rem; color:#666; margin-bottom:4px; text-transform:uppercase;">Rol 2</div>
+        <div id="role-2-name" style="font-size:0.8rem; color:#7ec8e3; margin-bottom:6px; min-height:16px;">-</div>
+        <button id="role-2-champ" class="btn" style="width:100%; background:#2a3a5c; color:#999; padding:6px; border-radius:4px; border:none; font-size:0.7rem;" onclick="clickRole(1)">Elegir</button>
+      </div>
     </div>
-    <input id="champ-search" class="search-box" placeholder="Buscar campeón..." onkeyup="buscarChampion()" style="display:none;">
-    <div id="search-results" class="search-results" style="display:none;"></div>
+    <input id="champ-search-1" class="search-box" placeholder="Rol 1: buscar..." onkeyup="buscarChampion(0)" style="display:none; margin-bottom:6px;">
+    <div id="search-results-1" class="search-results" style="display:none; margin-bottom:8px;"></div>
+    <input id="champ-search-2" class="search-box" placeholder="Rol 2: buscar..." onkeyup="buscarChampion(1)" style="display:none; margin-bottom:6px;">
+    <div id="search-results-2" class="search-results" style="display:none;"></div>
   </div>
 
   <div id="aram-info" style="display:none;">
@@ -287,7 +298,8 @@ HTML_PAGE = """<!DOCTYPE html>
 
 <script>
   let championsData = [];
-  let selectedRoleIndex = 0;
+  let selectedRoleIndex = -1;
+  let roleNames = ["", ""];
 
   function poll() {
     fetch('/api/status').then(r => r.json()).then(d => {
@@ -383,9 +395,12 @@ HTML_PAGE = """<!DOCTYPE html>
     });
   }
 
-  function buscarChampion() {
-    const query = document.getElementById('champ-search').value.toLowerCase();
-    const resultsDiv = document.getElementById('search-results');
+  function buscarChampion(roleIdx) {
+    const searchId = 'champ-search-' + (roleIdx + 1);
+    const resultsId = 'search-results-' + (roleIdx + 1);
+    const query = document.getElementById(searchId).value.toLowerCase();
+    const resultsDiv = document.getElementById(resultsId);
+
     if (!query) {
       resultsDiv.style.display = 'none';
       return;
@@ -401,19 +416,18 @@ HTML_PAGE = """<!DOCTYPE html>
     });
 
     resultsDiv.innerHTML = sorted.slice(0, 8).map(c =>
-      `<div class="search-result" onclick="selectChampion('${selectedRoleIndex}', ${c.id})">${c.name}</div>`
+      `<div class="search-result" onclick="selectChampion(${roleIdx}, ${c.id}, '${c.name}')">${c.name}</div>`
     ).join('');
     resultsDiv.style.display = sorted.length > 0 ? 'block' : 'none';
   }
 
-  function selectChampion(roleIndex, champId) {
-    if (roleIndex === 0) {
-      document.getElementById('role-1-btn').textContent = championsData.find(c => c.id === champId)?.name || '?';
-    } else {
-      document.getElementById('role-2-btn').textContent = championsData.find(c => c.id === champId)?.name || '?';
-    }
-    document.getElementById('champ-search').value = '';
-    document.getElementById('search-results').style.display = 'none';
+  function selectChampion(roleIdx, champId, champName) {
+    roleNames[roleIdx] = champName;
+    document.getElementById('role-' + (roleIdx + 1) + '-name').textContent = champName;
+    document.getElementById('champ-search-' + (roleIdx + 1)).value = '';
+    document.getElementById('search-results-' + (roleIdx + 1)).style.display = 'none';
+    document.getElementById('champ-search-' + (roleIdx + 1)).style.display = 'none';
+    selectedRoleIndex = -1;
   }
 
   async function cargarConfig() {
@@ -454,12 +468,22 @@ HTML_PAGE = """<!DOCTYPE html>
     toggle.textContent = content.classList.contains('open') ? '▲' : '▼';
   }
 
-  function selectRole(index) {
-    selectedRoleIndex = index;
-    document.getElementById('role-1-btn').style.borderColor = index === 0 ? '#2a5c3a' : '#555';
-    document.getElementById('role-2-btn').style.borderColor = index === 1 ? '#2a5c3a' : '#555';
-    document.getElementById('champ-search').style.display = 'block';
-    document.getElementById('champ-search').focus();
+  function clickRole(roleIdx) {
+    const searchId = 'champ-search-' + (roleIdx + 1);
+    const resultsId = 'search-results-' + (roleIdx + 1);
+    const searchEl = document.getElementById(searchId);
+
+    if (searchEl.style.display === 'none' || !searchEl.style.display) {
+      searchEl.style.display = 'block';
+      document.getElementById('champ-search-' + (3 - roleIdx)).style.display = 'none';
+      document.getElementById('search-results-' + (3 - roleIdx)).style.display = 'none';
+      searchEl.focus();
+      selectedRoleIndex = roleIdx;
+    } else {
+      searchEl.style.display = 'none';
+      document.getElementById(resultsId).style.display = 'none';
+      selectedRoleIndex = -1;
+    }
   }
 
   async function inicializar() {
@@ -548,25 +572,23 @@ CHAMPIONS_HARDCODED = [
     {"id": 74, "name": "Heimerdinger"}, {"id": 75, "name": "Nasus"}, {"id": 76, "name": "Nidalee"}, {"id": 77, "name": "Udyr"},
     {"id": 78, "name": "Poppy"}, {"id": 79, "name": "Gragas"}, {"id": 80, "name": "Pantheon"}, {"id": 81, "name": "Ezreal"},
     {"id": 82, "name": "Mordekaiser"}, {"id": 83, "name": "Yorick"}, {"id": 84, "name": "Akali"}, {"id": 85, "name": "Kennen"},
-    {"id": 86, "name": "Gnar"}, {"id": 89, "name": "Leona"}, {"id": 90, "name": "Talon"}, {"id": 91, "name": "Tahmm Kench"},
+    {"id": 86, "name": "Gnar"}, {"id": 89, "name": "Leona"}, {"id": 90, "name": "Talon"}, {"id": 91, "name": "Tahm Kench"},
     {"id": 92, "name": "Riven"}, {"id": 96, "name": "Kog'Maw"}, {"id": 98, "name": "Shen"}, {"id": 99, "name": "Lux"},
     {"id": 101, "name": "Xerath"}, {"id": 102, "name": "Shyvana"}, {"id": 103, "name": "Ahri"}, {"id": 104, "name": "Darius"},
     {"id": 105, "name": "Fizz"}, {"id": 106, "name": "Volibear"}, {"id": 107, "name": "Rengar"}, {"id": 110, "name": "Varus"},
     {"id": 111, "name": "Nautilus"}, {"id": 112, "name": "Viktor"}, {"id": 113, "name": "Sejuani"}, {"id": 114, "name": "Fiora"},
     {"id": 115, "name": "Zyra"}, {"id": 117, "name": "Lulu"}, {"id": 119, "name": "Draven"}, {"id": 120, "name": "Hecarim"},
-    {"id": 121, "name": "Kha'Zix"}, {"id": 122, "name": "Darius"}, {"id": 126, "name": "Jayce"}, {"id": 127, "name": "Lissandra"},
-    {"id": 131, "name": "Diana"}, {"id": 133, "name": "Quinn"}, {"id": 134, "name": "Syndra"}, {"id": 136, "name": "Aurelion Sol"},
-    {"id": 141, "name": "Kayn"}, {"id": 142, "name": "Zoe"}, {"id": 143, "name": "Zyra"}, {"id": 145, "name": "Kai'Sa"},
-    {"id": 147, "name": "Seraphine"}, {"id": 150, "name": "Gnar"}, {"id": 154, "name": "Zac"}, {"id": 157, "name": "Yasuo"},
-    {"id": 161, "name": "Vel'Koz"}, {"id": 163, "name": "Taliyah"}, {"id": 164, "name": "Camille"}, {"id": 166, "name": "Yuumi"},
-    {"id": 167, "name": "Akshan"}, {"id": 168, "name": "Hwei"}, {"id": 164, "name": "Camille"}, {"id": 245, "name": "Ekko"},
+    {"id": 121, "name": "Kha'Zix"}, {"id": 126, "name": "Jayce"}, {"id": 127, "name": "Lissandra"}, {"id": 131, "name": "Diana"},
+    {"id": 133, "name": "Quinn"}, {"id": 134, "name": "Syndra"}, {"id": 136, "name": "Aurelion Sol"}, {"id": 141, "name": "Kayn"},
+    {"id": 142, "name": "Zoe"}, {"id": 145, "name": "Kai'Sa"}, {"id": 147, "name": "Seraphine"}, {"id": 154, "name": "Zac"},
+    {"id": 157, "name": "Yasuo"}, {"id": 161, "name": "Vel'Koz"}, {"id": 163, "name": "Taliyah"}, {"id": 164, "name": "Camille"},
+    {"id": 166, "name": "Yuumi"}, {"id": 167, "name": "Akshan"}, {"id": 168, "name": "Hwei"}, {"id": 245, "name": "Ekko"},
     {"id": 246, "name": "Qiyana"}, {"id": 247, "name": "Rell"}, {"id": 254, "name": "Vi"}, {"id": 266, "name": "Aatrox"},
-    {"id": 267, "name": "Nami"}, {"id": 268, "name": "Azir"}, {"id": 269, "name": "Garen"}, {"id": 350, "name": "Yuumi"},
-    {"id": 360, "name": "Samira"}, {"id": 412, "name": "Thresh"}, {"id": 420, "name": "Illaoi"}, {"id": 421, "name": "Rek'Sai"},
-    {"id": 427, "name": "Ivern"}, {"id": 429, "name": "Kalista"}, {"id": 432, "name": "Bard"}, {"id": 497, "name": "Rakan"},
-    {"id": 498, "name": "Xayah"}, {"id": 516, "name": "Ornn"}, {"id": 517, "name": "Sylas"}, {"id": 518, "name": "Neeko"},
-    {"id": 523, "name": "Aphelios"}, {"id": 526, "name": "Rell"}, {"id": 555, "name": "Pyke"}, {"id": 875, "name": "Sett"},
-    {"id": 876, "name": "Lillia"}, {"id": 887, "name": "Yone"}, {"id": 897, "name": "K'Sante"}, {"id": 902, "name": "Seraphine"},
+    {"id": 267, "name": "Nami"}, {"id": 268, "name": "Azir"}, {"id": 360, "name": "Samira"}, {"id": 412, "name": "Thresh"},
+    {"id": 420, "name": "Illaoi"}, {"id": 421, "name": "Rek'Sai"}, {"id": 427, "name": "Ivern"}, {"id": 429, "name": "Kalista"},
+    {"id": 432, "name": "Bard"}, {"id": 497, "name": "Rakan"}, {"id": 498, "name": "Xayah"}, {"id": 516, "name": "Ornn"},
+    {"id": 517, "name": "Sylas"}, {"id": 518, "name": "Neeko"}, {"id": 523, "name": "Aphelios"}, {"id": 555, "name": "Pyke"},
+    {"id": 875, "name": "Sett"}, {"id": 876, "name": "Lillia"}, {"id": 887, "name": "Yone"}, {"id": 897, "name": "K'Sante"},
 ]
 
 @app.route('/api/champions', methods=['GET'])
@@ -597,43 +619,42 @@ def api_champions():
 def get_local_ip():
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        s.connect(("8.8.8.8", 80))
+        s.connect(("8.8.8.8", 443))
         ip = s.getsockname()[0]
         s.close()
-        return ip
+        return ip if ip and not ip.startswith("127.") else None
     except Exception:
-        return "127.0.0.1"
+        return None
 
 def iniciar_servidor_web():
     logging.getLogger('werkzeug').disabled = True
     ip_local = get_local_ip()
 
-    for puerto in range(5000, 5011):
-        try:
-            web_info["url"] = f"http://{ip_local}:{puerto}"
-            logger.info(f"Monitor web: {web_info['url']}")
-            app.run(host='0.0.0.0', port=puerto, debug=False, use_reloader=False)
-            return
-        except OSError:
-            web_info["url"] = None
-            continue
-        except Exception as e:
-            logger.error(f"Error inesperado en Flask: {e}")
-            break
+    if ip_local:
+        for puerto in range(5000, 5011):
+            try:
+                web_info["url"] = f"http://{ip_local}:{puerto}"
+                logger.info(f"🌐 Monitor web en red local: {web_info['url']}")
+                app.run(host='0.0.0.0', port=puerto, debug=False, use_reloader=False)
+                return
+            except OSError:
+                continue
+            except Exception as e:
+                logger.error(f"Error en Flask: {e}")
+                break
 
     for puerto in range(5000, 5011):
         try:
             web_info["url"] = f"http://127.0.0.1:{puerto}"
-            logger.warning(f"[Web Nivel B] Monitor solo en localhost:{puerto}")
+            logger.warning(f"⚠️  Monitor solo localhost: {web_info['url']}")
             app.run(host='127.0.0.1', port=puerto, debug=False, use_reloader=False)
             return
         except OSError:
-            web_info["url"] = None
             continue
         except Exception:
             break
 
-    logger.warning("[Web Nivel C] Monitor web desactivado. El bot sigue funcionando por consola.")
+    logger.warning("❌ Monitor web desactivado. Bot sigue por consola.")
 
 def mostrar_qr_web(url):
     try:
