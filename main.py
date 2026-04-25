@@ -469,6 +469,9 @@ HTML_PAGE = """<!DOCTYPE html>
     const c2 = picks.champ2 ? `<span style="background:#2a5c3a; padding:2px 4px; border-radius:3px; margin-left:4px; position:relative;">${picks.champ2}<span style="cursor:pointer; margin-left:4px;" onclick="eliminarChampion(${roleIdx}, 2)">×</span></span>` : '';
     const pos = rolePos[roleIdx] || '-';
     document.getElementById('role-' + (roleIdx + 1) + '-info').innerHTML = `${pos} | ${c1} ${c2}`;
+
+    const btnText = picks.champ1 ? 'Elegir 2do pick' : 'Elegir';
+    document.getElementById('role-' + (roleIdx + 1) + '-btn').textContent = btnText;
   }
 
   async function cargarConfig() {
@@ -676,23 +679,31 @@ def iniciar_servidor_web():
     logging.getLogger('werkzeug').disabled = True
     ip_local = get_local_ip()
 
+    logger.info(f"[Web] Detectada IP local: {ip_local or 'FALLO'}")
+
     if ip_local:
         for puerto in range(5000, 5011):
             try:
                 web_info["url"] = f"http://{ip_local}:{puerto}"
-                logger.info(f"🌐 Monitor web en red local: {web_info['url']}")
+                logger.info(f"[Web] Escuchando en 0.0.0.0:{puerto}")
+                logger.info(f"[Web] ACCEDE DESDE CELU: {web_info['url']}")
+                print(f"\n{'='*60}")
+                print(f"  WEB: {web_info['url']}")
+                print(f"{'='*60}\n")
                 app.run(host='0.0.0.0', port=puerto, debug=False, use_reloader=False)
                 return
-            except OSError:
+            except OSError as e:
+                logger.debug(f"[Web] Puerto {puerto} ocupado: {e}")
                 continue
             except Exception as e:
-                logger.error(f"Error en Flask: {e}")
+                logger.error(f"[Web] Error: {e}")
                 break
 
+    logger.warning("[Web] Falló IP local, intentando 127.0.0.1...")
     for puerto in range(5000, 5011):
         try:
             web_info["url"] = f"http://127.0.0.1:{puerto}"
-            logger.warning(f"⚠️  Monitor solo localhost: {web_info['url']}")
+            logger.warning(f"[Web] NIVEL B - Solo localhost: {web_info['url']}")
             app.run(host='127.0.0.1', port=puerto, debug=False, use_reloader=False)
             return
         except OSError:
@@ -700,7 +711,7 @@ def iniciar_servidor_web():
         except Exception:
             break
 
-    logger.warning("❌ Monitor web desactivado. Bot sigue por consola.")
+    logger.error("[Web] CRITICO: No se pudo iniciar el servidor web")
 
 def mostrar_qr_web(url):
     try:
@@ -1376,14 +1387,18 @@ if __name__ == '__main__':
     hilo_web.start()
 
     # Esperar a que el servidor determine su URL
-    for _ in range(20):
+    logger.info("Esperando servidor web...")
+    for i in range(60):
         if web_info["url"]:
+            logger.info(f"✓ Servidor listo en intento {i}")
             break
-        time.sleep(0.05)
+        time.sleep(0.1)
 
     if web_info["url"]:
+        logger.info(f"URL WEB: {web_info['url']}")
         mostrar_qr_web(web_info["url"])
     else:
+        logger.error("✗ Servidor web NO se inició - revisa puertos 5000-5010")
         time.sleep(0.4)
 
     estrategia, lockfile_path = determinar_estrategia()
