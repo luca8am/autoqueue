@@ -715,42 +715,44 @@ def get_local_ip():
         return None
 
 def iniciar_servidor_web():
-    logging.getLogger('werkzeug').disabled = True
-    ip_local = get_local_ip()
+    try:
+        logger.info("[Web] Iniciando...")
+        logging.getLogger('werkzeug').disabled = True
+        ip_local = get_local_ip()
+        logger.info(f"[Web] IP local detectada: {ip_local or 'NONE'}")
 
-    logger.info(f"[Web] Detectada IP local: {ip_local or 'FALLO'}")
+        if ip_local:
+            logger.info(f"[Web] Intentando 0.0.0.0 en puertos 5000-5010...")
+            for puerto in range(5000, 5011):
+                try:
+                    web_info["url"] = f"http://{ip_local}:{puerto}"
+                    logger.info(f"[Web] Escuchando en 0.0.0.0:{puerto}")
+                    logger.info(f"[Web] ACCEDE: {web_info['url']}")
+                    app.run(host='0.0.0.0', port=puerto, debug=False, use_reloader=False, threaded=True)
+                    return
+                except OSError as e:
+                    logger.debug(f"[Web] Puerto {puerto} ocupado")
+                    continue
+                except Exception as e:
+                    logger.error(f"[Web] Error en puerto {puerto}: {type(e).__name__}: {e}")
+                    break
 
-    if ip_local:
+        logger.warning("[Web] Fallback a 127.0.0.1...")
         for puerto in range(5000, 5011):
             try:
-                web_info["url"] = f"http://{ip_local}:{puerto}"
-                logger.info(f"[Web] Escuchando en 0.0.0.0:{puerto}")
-                logger.info(f"[Web] ACCEDE DESDE CELU: {web_info['url']}")
-                print(f"\n{'='*60}")
-                print(f"  WEB: {web_info['url']}")
-                print(f"{'='*60}\n")
-                app.run(host='0.0.0.0', port=puerto, debug=False, use_reloader=False)
+                web_info["url"] = f"http://127.0.0.1:{puerto}"
+                logger.warning(f"[Web] Escuchando en 127.0.0.1:{puerto} (solo localhost)")
+                app.run(host='127.0.0.1', port=puerto, debug=False, use_reloader=False, threaded=True)
                 return
-            except OSError as e:
-                logger.debug(f"[Web] Puerto {puerto} ocupado: {e}")
+            except OSError:
                 continue
             except Exception as e:
-                logger.error(f"[Web] Error: {e}")
+                logger.error(f"[Web] Fallback error: {e}")
                 break
 
-    logger.warning("[Web] Falló IP local, intentando 127.0.0.1...")
-    for puerto in range(5000, 5011):
-        try:
-            web_info["url"] = f"http://127.0.0.1:{puerto}"
-            logger.warning(f"[Web] NIVEL B - Solo localhost: {web_info['url']}")
-            app.run(host='127.0.0.1', port=puerto, debug=False, use_reloader=False)
-            return
-        except OSError:
-            continue
-        except Exception:
-            break
-
-    logger.error("[Web] CRITICO: No se pudo iniciar el servidor web")
+        logger.error("[Web] CRITICO: No se pudo iniciar en ningún puerto")
+    except Exception as e:
+        logger.error(f"[Web] Exception no capturada: {type(e).__name__}: {e}")
 
 def mostrar_qr_web(url):
     try:
@@ -1465,22 +1467,24 @@ if __name__ == '__main__':
     logger.info("AutoQueue  ∞  dev by 8AM")
     logger.info("=========================================")
 
-    hilo_web = threading.Thread(target=iniciar_servidor_web, daemon=True)
+    logger.info("[Main] Iniciando servidor web en thread...")
+    hilo_web = threading.Thread(target=iniciar_servidor_web, daemon=True, name="WebServer")
     hilo_web.start()
+    logger.info(f"[Main] Thread creado: {hilo_web.name}, vivo: {hilo_web.is_alive()}")
 
     # Esperar a que el servidor determine su URL
-    logger.info("Esperando servidor web...")
+    logger.info("[Main] Esperando servidor web...")
     for i in range(60):
         if web_info["url"]:
-            logger.info(f"✓ Servidor listo en intento {i}")
+            logger.info(f"[Main] ✓ Servidor listo en intento {i}")
             break
         time.sleep(0.1)
 
     if web_info["url"]:
-        logger.info(f"URL WEB: {web_info['url']}")
+        logger.info(f"[Main] URL WEB: {web_info['url']}")
         mostrar_qr_web(web_info["url"])
     else:
-        logger.error("✗ Servidor web NO se inició - revisa puertos 5000-5010")
+        logger.error("[Main] ✗ Servidor web NO se inició - revisa los logs arriba")
         time.sleep(0.4)
 
     estrategia, lockfile_path = determinar_estrategia()
