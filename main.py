@@ -310,6 +310,15 @@ HTML_PAGE = """<!DOCTYPE html>
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       return r.json();
     }).then(d => {
+      console.log('[Poll] Data:', {
+        estado: d.estado,
+        fase: d.fase,
+        tipo_queue: d.tipo_queue,
+        posiciones: d.posiciones,
+        miembros: d.miembros_lobby?.length || 0,
+        encontrada: d.encontrada
+      });
+
       const el = document.getElementById('estado-text');
       const dot = document.getElementById('dot');
       const act = document.getElementById('actions');
@@ -980,12 +989,9 @@ def _resetear_estado_lobby():
     champ_select_state.update({"local_cell_id": None, "action_id_ban": None})
 
 def _procesar_lobby(data):
-    logger.debug(f"[Lobby] Procesando datos: {data.keys() if isinstance(data, dict) else type(data)}")
-
     modo = data.get("gameConfig", {}).get("gameMode", "")
     queue_id = data.get("gameConfig", {}).get("queueId", 0)
     estado_partida["modo_juego"] = modo
-    logger.debug(f"[Lobby] Modo: {modo}, Queue: {queue_id}")
 
     QUEUE_NAMES = {
         0: "Práctica",
@@ -1034,8 +1040,6 @@ def _procesar_lobby(data):
         estado_partida["posiciones"] = "Espera en champ select"
     else:
         estado_partida["posiciones"] = None
-
-    logger.debug(f"[Lobby] Resultado: tipo_queue={estado_partida['tipo_queue']}, posiciones={estado_partida['posiciones']}, miembros={len(estado_partida['miembros_lobby'])}")
 
 def _detectar_turno_ban(data):
     local_cell = data.get("localPlayerCellId")
