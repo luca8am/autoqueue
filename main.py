@@ -44,13 +44,14 @@ if sys.stdout.encoding.lower() != 'utf-8':
 # Logging
 # ==========================================
 logging.basicConfig(
-    level=logging.DEBUG,
+    level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
     datefmt='%H:%M:%S',
     handlers=[logging.StreamHandler(sys.stdout)]
 )
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)
+logger.setLevel(logging.INFO)
+logging.getLogger('lcu_driver').setLevel(logging.WARNING)
 
 # ==========================================
 # Estado global compartido
@@ -258,6 +259,24 @@ HTML_PAGE = """<!DOCTYPE html>
       <input id="champ-search-1" class="search-box" placeholder="Buscar campeón..." onkeyup="buscarChampion(1)" style="display:none; margin-top:6px;">
       <div id="search-results-1" class="search-results" style="display:none; margin-top:6px;"></div>
     </div>
+
+    <div id="bans-section" style="display:none; margin-top:8px;">
+      <div style="background:#0f0f0f; border:1px solid #2a2a2a; border-radius:6px; padding:8px; margin-bottom:8px;">
+        <div style="font-size:0.7rem; color:#666; margin-bottom:4px; text-transform:uppercase;">Ban 1</div>
+        <div id="ban-1-info" style="font-size:0.75rem; color:#7ec8e3; margin-bottom:6px;">-</div>
+        <button id="ban-1-btn" class="btn" style="width:100%; background:#2a3a5c; color:#999; padding:6px; border-radius:4px; border:1px solid #2a5c3a; font-size:0.7rem;" onclick="abrirBuscadorBan(0)">Elegir</button>
+        <input id="ban-search-0" class="search-box" placeholder="Buscar campeón..." onkeyup="buscarBan(0)" style="display:none; margin-top:6px;">
+        <div id="ban-results-0" class="search-results" style="display:none; margin-top:6px;"></div>
+      </div>
+
+      <div style="background:#0f0f0f; border:1px solid #2a2a2a; border-radius:6px; padding:8px;">
+        <div style="font-size:0.7rem; color:#666; margin-bottom:4px; text-transform:uppercase;">Ban 2</div>
+        <div id="ban-2-info" style="font-size:0.75rem; color:#7ec8e3; margin-bottom:6px;">-</div>
+        <button id="ban-2-btn" class="btn" style="width:100%; background:#2a3a5c; color:#999; padding:6px; border-radius:4px; border:1px solid #2a5c3a; font-size:0.7rem;" onclick="abrirBuscadorBan(1)">Elegir</button>
+        <input id="ban-search-1" class="search-box" placeholder="Buscar campeón..." onkeyup="buscarBan(1)" style="display:none; margin-top:6px;">
+        <div id="ban-results-1" class="search-results" style="display:none; margin-top:6px;"></div>
+      </div>
+    </div>
   </div>
 
   <div id="aram-info" style="display:none;">
@@ -304,6 +323,28 @@ HTML_PAGE = """<!DOCTYPE html>
     0: {champ1: null, champ2: null},
     1: {champ1: null, champ2: null}
   };
+  let bansPicks = {
+    0: null,
+    1: null
+  };
+
+  // Cargar picks del localStorage
+  function cargarPicksLocal() {
+    const saved = localStorage.getItem('autoqueuePicks');
+    if (saved) {
+      try {
+        rolePicks = JSON.parse(saved);
+        actualizarVistaRol(0);
+        actualizarVistaRol(1);
+      } catch (e) {
+        console.error('[Local] Error al cargar picks:', e);
+      }
+    }
+  }
+
+  function guardarPicksLocal() {
+    localStorage.setItem('autoqueuePicks', JSON.stringify(rolePicks));
+  }
 
   function poll() {
     fetch('/api/status').then(r => {
@@ -328,7 +369,11 @@ HTML_PAGE = """<!DOCTYPE html>
       el.textContent = d.estado;
       el.className = d.encontrada ? 'found' : '';
       dot.className = 'dot' + (d.encontrada ? ' on' : '');
-      act.style.display = d.encontrada ? 'flex' : 'none';
+
+      // Solo mostrar botones si encontrada=true Y no ha sido aceptada aún
+      const estadoAceptada = d.estado && (d.estado.includes('aceptada') || d.estado.includes('Aceptada') || d.estado.includes('confirmacion'));
+      act.style.display = (d.encontrada && !estadoAceptada) ? 'flex' : 'none';
+
       document.getElementById('velmax').checked = !!d.velocidad_maxima;
 
       const enFase = d.fase === 'Lobby' || d.fase === 'Matchmaking' || d.fase === 'ChampSelect';
@@ -346,6 +391,7 @@ HTML_PAGE = """<!DOCTYPE html>
         const isAram = d.tipo_queue && d.tipo_queue.includes('ARAM');
 
         document.getElementById('ranked-picks').style.display = isRanked ? 'block' : 'none';
+        document.getElementById('bans-section').style.display = isRanked ? 'block' : 'none';
         document.getElementById('aram-info').style.display = isAram ? 'block' : 'none';
 
         if (isRanked && d.posiciones) {
@@ -453,13 +499,7 @@ HTML_PAGE = """<!DOCTYPE html>
     }
 
     const filtered = championsData.filter(c => c.name.toLowerCase().includes(query));
-    const sorted = filtered.sort((a, b) => {
-      const aStarts = a.name.toLowerCase().startsWith(query);
-      const bStarts = b.name.toLowerCase().startsWith(query);
-      if (aStarts && !bStarts) return -1;
-      if (!aStarts && bStarts) return 1;
-      return a.name.localeCompare(b.name);
-    });
+    const sorted = filtered.sort((a, b) => a.name.localeCompare(b.name));
 
     resultsDiv.innerHTML = sorted.slice(0, 8).map(c =>
       `<div class="search-result" onclick="selectChampion(${roleIdx}, '${c.name}')">${c.name}</div>`
@@ -476,6 +516,7 @@ HTML_PAGE = """<!DOCTYPE html>
       rolePicks[roleIdx].champ2 = champName;
     }
     actualizarVistaRol(roleIdx);
+    guardarPicksLocal();
     document.getElementById('champ-search-' + roleIdx).value = '';
     document.getElementById('search-results-' + roleIdx).style.display = 'none';
   }
@@ -484,6 +525,7 @@ HTML_PAGE = """<!DOCTYPE html>
     if (slot === 1) rolePicks[roleIdx].champ1 = null;
     else rolePicks[roleIdx].champ2 = null;
     actualizarVistaRol(roleIdx);
+    guardarPicksLocal();
   }
 
   function actualizarVistaRol(roleIdx) {
@@ -495,6 +537,62 @@ HTML_PAGE = """<!DOCTYPE html>
 
     const btnText = picks.champ1 ? 'Elegir 2do pick' : 'Elegir';
     document.getElementById('role-' + (roleIdx + 1) + '-btn').textContent = btnText;
+  }
+
+  function abrirBuscadorBan(banIdx) {
+    const searchId = 'ban-search-' + banIdx;
+    const resultsId = 'ban-results-' + banIdx;
+    const searchEl = document.getElementById(searchId);
+    const resultsEl = document.getElementById(resultsId);
+
+    if (searchEl.style.display === 'none' || !searchEl.style.display) {
+      searchEl.style.display = 'block';
+      resultsEl.style.display = 'none';
+      searchEl.focus();
+    } else {
+      searchEl.style.display = 'none';
+      resultsEl.style.display = 'none';
+      searchEl.value = '';
+    }
+  }
+
+  function buscarBan(banIdx) {
+    const searchId = 'ban-search-' + banIdx;
+    const resultsId = 'ban-results-' + banIdx;
+    const query = document.getElementById(searchId).value.toLowerCase();
+    const resultsDiv = document.getElementById(resultsId);
+
+    if (!query) {
+      resultsDiv.style.display = 'none';
+      return;
+    }
+
+    const filtered = championsData.filter(c => c.name.toLowerCase().includes(query));
+    const sorted = filtered.sort((a, b) => a.name.localeCompare(b.name));
+
+    resultsDiv.innerHTML = sorted.slice(0, 8).map(c =>
+      `<div class="search-result" onclick="selectBan(${banIdx}, '${c.name}')">${c.name}</div>`
+    ).join('');
+    resultsDiv.style.display = sorted.length > 0 ? 'block' : 'none';
+  }
+
+  function selectBan(banIdx, champName) {
+    bansPicks[banIdx] = champName;
+    actualizarVistaBan(banIdx);
+    document.getElementById('ban-search-' + banIdx).value = '';
+    document.getElementById('ban-results-' + banIdx).style.display = 'none';
+  }
+
+  function eliminarBan(banIdx) {
+    bansPicks[banIdx] = null;
+    actualizarVistaBan(banIdx);
+  }
+
+  function actualizarVistaBan(banIdx) {
+    const champ = bansPicks[banIdx];
+    const display = champ ? `<span style="background:#2a5c3a; padding:2px 4px; border-radius:3px;">${champ}<span style="cursor:pointer; margin-left:4px;" onclick="eliminarBan(${banIdx})">×</span></span>` : '-';
+    document.getElementById('ban-' + (banIdx + 1) + '-info').innerHTML = display;
+    document.getElementById('ban-' + (banIdx + 1) + '-btn').textContent = champ ? 'Cambiar' : 'Elegir';
   }
 
   async function cargarConfig() {
@@ -559,6 +657,10 @@ HTML_PAGE = """<!DOCTYPE html>
 
   async function inicializar() {
     try {
+      console.log('[Init] Cargando picks locales...');
+      cargarPicksLocal();
+      console.log('[Init] Picks locales cargados');
+
       console.log('[Init] Cargando campeones...');
       await cargarChampions();
       console.log('[Init] Campeones cargados');
@@ -593,6 +695,10 @@ HTML_PAGE = """<!DOCTYPE html>
 # Flask - Monitor Web
 # ==========================================
 app = Flask(__name__)
+
+@app.route('/test')
+def test():
+    return 'OK'
 
 @app.route('/')
 def index():
@@ -715,44 +821,37 @@ def get_local_ip():
         return None
 
 def iniciar_servidor_web():
-    try:
-        logger.info("[Web] Iniciando...")
-        logging.getLogger('werkzeug').disabled = True
-        ip_local = get_local_ip()
-        logger.info(f"[Web] IP local detectada: {ip_local or 'NONE'}")
+    logging.getLogger('werkzeug').disabled = True
+    ip_local = get_local_ip()
 
-        if ip_local:
-            logger.info(f"[Web] Intentando 0.0.0.0 en puertos 5000-5010...")
-            for puerto in range(5000, 5011):
-                try:
-                    web_info["url"] = f"http://{ip_local}:{puerto}"
-                    logger.info(f"[Web] Escuchando en 0.0.0.0:{puerto}")
-                    logger.info(f"[Web] ACCEDE: {web_info['url']}")
-                    app.run(host='0.0.0.0', port=puerto, debug=False, use_reloader=False, threaded=True)
-                    return
-                except OSError as e:
-                    logger.debug(f"[Web] Puerto {puerto} ocupado")
-                    continue
-                except Exception as e:
-                    logger.error(f"[Web] Error en puerto {puerto}: {type(e).__name__}: {e}")
-                    break
+    print(f"\n[Web] IP detectada: {ip_local or 'FALLO'}\n")
 
-        logger.warning("[Web] Fallback a 127.0.0.1...")
+    if ip_local:
+        print(f"[Web] Intentando 0.0.0.0 en puertos 5000-5010...")
         for puerto in range(5000, 5011):
             try:
-                web_info["url"] = f"http://127.0.0.1:{puerto}"
-                logger.warning(f"[Web] Escuchando en 127.0.0.1:{puerto} (solo localhost)")
-                app.run(host='127.0.0.1', port=puerto, debug=False, use_reloader=False, threaded=True)
+                web_info["url"] = f"http://{ip_local}:{puerto}"
+                print(f"[Web] ✓ Escuchando en 0.0.0.0:{puerto}")
+                print(f"[Web] Accede desde celular: {web_info['url']}\n")
+                app.run(host='0.0.0.0', port=puerto, debug=False, use_reloader=False, threaded=True)
                 return
             except OSError:
                 continue
             except Exception as e:
-                logger.error(f"[Web] Fallback error: {e}")
+                print(f"[Web] Error: {e}")
                 break
 
-        logger.error("[Web] CRITICO: No se pudo iniciar en ningún puerto")
-    except Exception as e:
-        logger.error(f"[Web] Exception no capturada: {type(e).__name__}: {e}")
+    print(f"[Web] Fallback a 127.0.0.1...")
+    for puerto in range(5000, 5011):
+        try:
+            web_info["url"] = f"http://127.0.0.1:{puerto}"
+            print(f"[Web] ✓ Escuchando en 127.0.0.1:{puerto} (solo localhost)\n")
+            app.run(host='127.0.0.1', port=puerto, debug=False, use_reloader=False, threaded=True)
+            return
+        except OSError:
+            continue
+
+    print(f"[Web] ERROR: No se pudo iniciar el servidor")
 
 def mostrar_qr_web(url):
     try:
@@ -1117,12 +1216,9 @@ async def connect(connection):
 
         r = await connection.request('get', '/lol-gameflow/v1/gameflow-phase')
         data = await r.json()
-        logger.info(f"  Fase inicial: {data}")
         _actualizar_fase(data)
 
-        logger.info("  Iniciando polling loop...")
         asyncio.create_task(_polling_lobby_loop(connection))
-        logger.info("  Polling loop creado")
     except Exception as e:
         logger.error(f"Error en connect: {e}")
 
@@ -1169,28 +1265,19 @@ async def match_found(connection, event):
 
 async def _polling_lobby_loop(connection):
     """Polling periódico de lobby y champ-select (fallback para WebSocket)"""
-    logger.info("[Polling] Loop iniciado")
-    conteo = 0
     while True:
         await asyncio.sleep(2.0)
-        conteo += 1
 
         try:
-            if estado_partida["fase"] == "Lobby":
-                if conteo % 3 == 0:
-                    logger.debug(f"[Polling] Lobby check {conteo}: última actualización hace {time.time() - _last_lobby_update:.1f}s")
-                if time.time() - _last_lobby_update > 3.0:
-                    logger.info(f"[Polling] Obteniendo /lol-lobby/v2/lobby...")
-                    r = await connection.request('get', '/lol-lobby/v2/lobby')
-                    data = await r.json()
-                    logger.info(f"[Polling] Datos obtenidos, procesando...")
-                    _procesar_lobby(data)
+            if estado_partida["fase"] == "Lobby" and time.time() - _last_lobby_update > 3.0:
+                r = await connection.request('get', '/lol-lobby/v2/lobby')
+                data = await r.json()
+                _procesar_lobby(data)
         except Exception as e:
             logger.error(f"[Polling Lobby] Error: {e}")
 
         try:
             if estado_partida["fase"] == "ChampSelect" and time.time() - _last_champ_select_update > 2.0:
-                logger.info(f"[Polling] Obteniendo /lol-champ-select/v1/session...")
                 r = await connection.request('get', '/lol-champ-select/v1/session')
                 data = await r.json()
                 champ_select_state["local_cell_id"] = data.get("localPlayerCellId")
@@ -1198,7 +1285,6 @@ async def _polling_lobby_loop(connection):
                 if action_id:
                     champion_id = _elegir_campeon_ban(data)
                     if champion_id:
-                        logger.info(f"[Polling] Auto-baneando {champion_id}")
                         await _ejecutar_ban_ws(connection, action_id, champion_id)
         except Exception as e:
             logger.error(f"[Polling ChampSelect] Error: {e}")
@@ -1463,29 +1549,30 @@ def determinar_estrategia():
 # Main
 # ==========================================
 if __name__ == '__main__':
+    print("=========================================")
+    print("AutoQueue  ∞  dev by 8AM")
+    print("=========================================")
+    print()
+
+    print("[1/3] Iniciando servidor web...")
+    hilo_web = threading.Thread(target=iniciar_servidor_web, daemon=True, name="WebServer")
+    hilo_web.start()
+
+    print("[2/3] Esperando servidor web (máx 10s)...")
+    for i in range(100):
+        if web_info["url"]:
+            print(f"✓ Servidor web listo: {web_info['url']}")
+            mostrar_qr_web(web_info["url"])
+            break
+        time.sleep(0.1)
+    else:
+        print("✗ Servidor web no respondió")
+
+    print()
+    print("[3/3] Conectando con League Client...")
     logger.info("=========================================")
     logger.info("AutoQueue  ∞  dev by 8AM")
     logger.info("=========================================")
-
-    logger.info("[Main] Iniciando servidor web en thread...")
-    hilo_web = threading.Thread(target=iniciar_servidor_web, daemon=True, name="WebServer")
-    hilo_web.start()
-    logger.info(f"[Main] Thread creado: {hilo_web.name}, vivo: {hilo_web.is_alive()}")
-
-    # Esperar a que el servidor determine su URL
-    logger.info("[Main] Esperando servidor web...")
-    for i in range(60):
-        if web_info["url"]:
-            logger.info(f"[Main] ✓ Servidor listo en intento {i}")
-            break
-        time.sleep(0.1)
-
-    if web_info["url"]:
-        logger.info(f"[Main] URL WEB: {web_info['url']}")
-        mostrar_qr_web(web_info["url"])
-    else:
-        logger.error("[Main] ✗ Servidor web NO se inició - revisa los logs arriba")
-        time.sleep(0.4)
 
     estrategia, lockfile_path = determinar_estrategia()
 
