@@ -142,3 +142,7 @@ cython_debug/
 .idea/
 *.swp
 *.swo
+
+# Node / WhatsApp bot
+node_modules/
+whatsapp-bot/auth/

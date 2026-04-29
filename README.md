@@ -41,6 +41,21 @@ Al iniciar el script, verás un mensaje como este en la consola:
 
 Solo tienes que entrar a esa dirección desde cualquier dispositivo conectado a tu misma red Wi-Fi (celular, tablet, otra PC) para ver el estado de tu cola en tiempo real.
 
+## 🤖 Bot BestBuild por WhatsApp
+
+La rama `bot-bestbuild` incluye un primer bot personal con Baileys en `whatsapp-bot/`.
+
+1. Ejecuta AutoQueue normalmente.
+2. En otra consola:
+   ```bash
+   cd whatsapp-bot
+   npm install
+   npm start
+   ```
+3. Escanea el QR con WhatsApp y envia `build`.
+
+Por ahora el bot consulta el contexto de champ select local y responde con una recomendacion basica. Falta conectar un proveedor real de builds meta.
+
 ---
 
 ## ⚠️ Notas Importantes

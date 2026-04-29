@@ -87,6 +87,17 @@ champ_select_state = {
     "action_id_ban": None,
 }
 
+bestbuild_state = {
+    "updated_at": None,
+    "phase": None,
+    "queue": None,
+    "mode": None,
+    "local_player": None,
+    "lane_opponent": None,
+    "allies": [],
+    "enemies": [],
+}
+
 lcu_conn = {
     "port": None,
     "token": None,
@@ -748,6 +759,14 @@ def api_set_config():
     guardar_config(config)
     return jsonify({"ok": True})
 
+@app.route('/api/bestbuild/context', methods=['GET'])
+def api_bestbuild_context():
+    return jsonify(bestbuild_state)
+
+@app.route('/api/bestbuild/recommendation', methods=['GET'])
+def api_bestbuild_recommendation():
+    return jsonify(_generar_recomendacion_basica(bestbuild_state))
+
 CHAMPIONS_HARDCODED = [
     {"id": 1, "name": "Annie"}, {"id": 2, "name": "Olaf"}, {"id": 3, "name": "Galio"}, {"id": 4, "name": "Twisted Fate"},
     {"id": 5, "name": "Xin Zhao"}, {"id": 6, "name": "Urgot"}, {"id": 7, "name": "LeBlanc"}, {"id": 8, "name": "Vladimir"},
@@ -809,6 +828,121 @@ def api_champions():
             pass
 
     return jsonify(sorted(CHAMPIONS_HARDCODED, key=lambda x: x["name"]))
+
+_CHAMPION_NAMES_BY_ID = {c["id"]: c["name"] for c in CHAMPIONS_HARDCODED}
+_champion_names_loaded_from_lcu = False
+
+def _refresh_champion_names_from_lcu():
+    global _champion_names_loaded_from_lcu
+
+    if _champion_names_loaded_from_lcu or not (lcu_conn["port"] and lcu_conn["token"]):
+        return
+
+    try:
+        creds = base64.b64encode(f"riot:{lcu_conn['token']}".encode()).decode()
+        headers = {'Authorization': f'Basic {creds}'}
+        r = requests.get(
+            f"https://127.0.0.1:{lcu_conn['port']}/lol-game-data/assets/v1/champion-summary.json",
+            headers=headers,
+            verify=False,
+            timeout=2
+        )
+        if r.status_code == 200:
+            for champion in r.json():
+                champion_id = champion.get("id")
+                name = champion.get("name")
+                if isinstance(champion_id, int) and champion_id > 0 and name:
+                    _CHAMPION_NAMES_BY_ID[champion_id] = name
+            _champion_names_loaded_from_lcu = True
+    except Exception:
+        pass
+
+def _champion_name(champion_id):
+    if not champion_id:
+        return None
+    _refresh_champion_names_from_lcu()
+    return _CHAMPION_NAMES_BY_ID.get(champion_id, f"Champion {champion_id}")
+
+def _normalize_position(position):
+    aliases = {
+        "TOP": "TOP",
+        "JUNGLE": "JGL",
+        "MIDDLE": "MID",
+        "BOTTOM": "ADC",
+        "UTILITY": "SUP",
+    }
+    return aliases.get(position or "", position or None)
+
+def _summarize_champ_select_player(player):
+    champion_id = player.get("championId") or player.get("championPickIntent") or 0
+    return {
+        "cell_id": player.get("cellId"),
+        "champion_id": champion_id or None,
+        "champion": _champion_name(champion_id),
+        "position": _normalize_position(player.get("assignedPosition")),
+        "summoner_id": player.get("summonerId"),
+    }
+
+def _procesar_bestbuild_context(data):
+    local_cell = data.get("localPlayerCellId")
+    allies = [_summarize_champ_select_player(p) for p in data.get("myTeam", [])]
+    enemies = [_summarize_champ_select_player(p) for p in data.get("theirTeam", [])]
+    local_player = next((p for p in allies if p["cell_id"] == local_cell), None)
+
+    lane_opponent = None
+    if local_player and local_player.get("position"):
+        lane_opponent = next(
+            (p for p in enemies if p.get("position") == local_player["position"] and p.get("champion")),
+            None
+        )
+
+    bestbuild_state.update({
+        "updated_at": time.time(),
+        "phase": estado_partida.get("fase"),
+        "queue": estado_partida.get("tipo_queue"),
+        "mode": estado_partida.get("modo_juego"),
+        "local_player": local_player,
+        "lane_opponent": lane_opponent,
+        "allies": allies,
+        "enemies": enemies,
+    })
+
+def _generar_recomendacion_basica(context):
+    local_player = context.get("local_player") or {}
+    champion = local_player.get("champion")
+    role = local_player.get("position")
+    opponent = (context.get("lane_opponent") or {}).get("champion")
+    enemies = [p.get("champion") for p in context.get("enemies", []) if p.get("champion")]
+
+    if not champion:
+        return {
+            "ok": False,
+            "message": "Todavia no detecte tu campeon. Entra a champ select o pickea/declara uno.",
+            "context": context,
+        }
+
+    notes = []
+    if opponent:
+        notes.append(f"Matchup detectado: {champion} {role or ''} vs {opponent}.")
+    elif enemies:
+        notes.append("Todavia no pude identificar rival de linea, pero ya veo enemigos: " + ", ".join(enemies) + ".")
+    else:
+        notes.append("Aun no hay enemigos visibles para adaptar la build.")
+
+    notes.append("Provider meta pendiente: esta respuesta confirma el flujo, falta conectar una fuente real de builds.")
+    notes.append("Regla base: prioriza botas defensivas contra mucho CC/AD/AP y anti-heal si ves curacion fuerte.")
+
+    return {
+        "ok": True,
+        "champion": champion,
+        "role": role,
+        "opponent": opponent,
+        "queue": context.get("queue"),
+        "items": [],
+        "runes": [],
+        "notes": notes,
+        "context": context,
+    }
 
 def get_local_ip():
     try:
@@ -1088,6 +1222,16 @@ def _actualizar_fase(fase):
 def _resetear_estado_lobby():
     estado_partida.update({"miembros_lobby": [], "posiciones": None, "modo_juego": None})
     champ_select_state.update({"local_cell_id": None, "action_id_ban": None})
+    bestbuild_state.update({
+        "updated_at": None,
+        "phase": estado_partida.get("fase"),
+        "queue": None,
+        "mode": None,
+        "local_player": None,
+        "lane_opponent": None,
+        "allies": [],
+        "enemies": [],
+    })
 
 def _procesar_lobby(data):
     modo = data.get("gameConfig", {}).get("gameMode", "")
@@ -1281,6 +1425,7 @@ async def _polling_lobby_loop(connection):
                 r = await connection.request('get', '/lol-champ-select/v1/session')
                 data = await r.json()
                 champ_select_state["local_cell_id"] = data.get("localPlayerCellId")
+                _procesar_bestbuild_context(data)
                 action_id = _detectar_turno_ban(data)
                 if action_id:
                     champion_id = _elegir_campeon_ban(data)
@@ -1323,6 +1468,7 @@ async def on_champ_select(connection, event):
     try:
         data = event.data
         champ_select_state["local_cell_id"] = data.get("localPlayerCellId")
+        _procesar_bestbuild_context(data)
         action_id = _detectar_turno_ban(data)
         if action_id:
             champion_id = _elegir_campeon_ban(data)
@@ -1369,6 +1515,7 @@ def _poll_champ_select(session, port):
         if r.status_code == 200:
             data = r.json()
             champ_select_state["local_cell_id"] = data.get("localPlayerCellId")
+            _procesar_bestbuild_context(data)
             action_id = _detectar_turno_ban(data)
             if action_id:
                 champion_id = _elegir_campeon_ban(data)
