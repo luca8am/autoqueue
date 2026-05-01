@@ -26,11 +26,15 @@ import time
 import ctypes
 import string
 import base64
-import msvcrt
 import requests
 import urllib3
 import psutil
 import json
+
+try:
+    import msvcrt
+except ImportError:
+    msvcrt = None
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
@@ -68,6 +72,7 @@ estado_partida = {
     "posiciones": None,
     "miembros_lobby": [],
     "ban_en_progreso": False,
+    "pick_en_progreso": False,
     "tipo_queue": None,
 }
 
@@ -85,7 +90,13 @@ web_info = {"url": None}
 champ_select_state = {
     "local_cell_id": None,
     "action_id_ban": None,
+    "action_id_pick": None,
 }
+
+agent_events = []
+agent_event_lock = threading.Lock()
+agent_event_next_id = 1
+agent_last_seen = time.time()
 
 bestbuild_state = {
     "updated_at": None,
@@ -96,6 +107,61 @@ bestbuild_state = {
     "lane_opponent": None,
     "allies": [],
     "enemies": [],
+}
+
+MOBALYTICS_GQL_URL = "https://widget.workers.mobalytics.gg/lol/graphql/v1/query"
+MOBALYTICS_WIDGET_TOKEN = "2bd985cc-dc15-4cad-bea7-0c9669751e08"
+MOBALYTICS_DYNAMIC_BUILD_QUERY = """
+query LolChampionWidgetDynamicQuery(
+  $champion: String!
+  $role: Rolename
+  $patch: String
+  $region: Region
+  $buildID: Int
+  $buildType: LolChampionBuildType
+  $gameMode: GameMode!
+) {
+  lol {
+    champion(filters: { slug: $champion, role: $role, patch: $patch, region: $region, gameMode: $gameMode }) {
+      build(filters: { buildId: $buildID, type: $buildType }) {
+        id
+        type
+        name
+        role
+        patch
+        championSlug
+        vsChampionSlug
+        spells
+        skillOrder
+        skillMaxOrder
+        items {
+          type
+          items
+        }
+        perks {
+          IDs
+          style
+          subStyle
+        }
+        stats {
+          wins
+          matchCount
+        }
+      }
+      stats {
+        tier
+      }
+    }
+  }
+}
+"""
+
+_ddragon_cache = {
+    "loaded_at": 0,
+    "version": None,
+    "items": {},
+    "summoners": {},
+    "runes": {},
 }
 
 lcu_conn = {
@@ -127,6 +193,22 @@ def guardar_config(config):
     with _config_lock:
         with open(CONFIG_PATH, 'w') as f:
             json.dump(config, f, indent=2)
+
+def registrar_evento(tipo, mensaje, data=None):
+    global agent_event_next_id, agent_last_seen
+    agent_last_seen = time.time()
+    with agent_event_lock:
+        event = {
+            "id": agent_event_next_id,
+            "ts": agent_last_seen,
+            "type": tipo,
+            "message": mensaje,
+            "data": data or {},
+        }
+        agent_event_next_id += 1
+        agent_events.append(event)
+        del agent_events[:-80]
+    return event
 
 # ==========================================
 # Web UI
@@ -767,6 +849,126 @@ def api_bestbuild_context():
 def api_bestbuild_recommendation():
     return jsonify(_generar_recomendacion_basica(bestbuild_state))
 
+@app.route('/api/bestbuild/manual', methods=['GET'])
+def api_bestbuild_manual():
+    champion_input = request.args.get("champion") or request.args.get("pick")
+    opponent_input = request.args.get("opponent") or request.args.get("vs")
+    role = normalizar_rol_usuario(request.args.get("role")) or None
+
+    if not champion_input:
+        return jsonify({"ok": False, "message": "Falta campeon. Ejemplo: /build yasuo vs ahri"}), 400
+
+    champion_id, champion_name = resolver_campeon(champion_input)
+    opponent_id, opponent_name = resolver_campeon(opponent_input) if opponent_input else (None, None)
+    champion_name = champion_name or str(champion_input).strip().title()
+    opponent_name = opponent_name or (str(opponent_input).strip().title() if opponent_input else None)
+
+    context = {
+        "updated_at": time.time(),
+        "phase": "Manual",
+        "queue": "Manual",
+        "mode": "CLASSIC",
+        "local_player": {
+            "cell_id": 0,
+            "champion_id": champion_id,
+            "champion": champion_name,
+            "position": role,
+            "summoner_id": None,
+        },
+        "lane_opponent": {
+            "cell_id": 1,
+            "champion_id": opponent_id,
+            "champion": opponent_name,
+            "position": role,
+            "summoner_id": None,
+        } if opponent_name else None,
+        "allies": [],
+        "enemies": [{
+            "cell_id": 1,
+            "champion_id": opponent_id,
+            "champion": opponent_name,
+            "position": role,
+            "summoner_id": None,
+        }] if opponent_name else [],
+    }
+    return jsonify(_generar_recomendacion_basica(context))
+
+@app.route('/api/agent/events', methods=['GET'])
+def api_agent_events():
+    since = request.args.get("since", "0")
+    try:
+        since_id = int(since)
+    except ValueError:
+        since_id = 0
+    with agent_event_lock:
+        events = [event for event in agent_events if event["id"] > since_id]
+    return jsonify({"ok": True, "events": events, "last_seen": agent_last_seen})
+
+@app.route('/api/agent/insta', methods=['POST'])
+def api_agent_insta():
+    data = request.get_json(silent=True) or {}
+    enabled = bool(data.get("enabled", False))
+    web_config["velocidad_maxima"] = enabled
+    estado = "activado" if enabled else "desactivado"
+    registrar_evento("insta_changed", f"Insta-accept {estado}.", {"enabled": enabled})
+    return jsonify({"ok": True, "enabled": enabled})
+
+@app.route('/api/agent/action', methods=['POST'])
+def api_agent_action():
+    data = request.get_json(silent=True) or {}
+    action = data.get("action")
+    if action not in ("aceptar", "rechazar"):
+        return jsonify({"ok": False, "error": "accion invalida"}), 400
+    web_accion["pendiente"] = action
+    return jsonify({"ok": True, "action": action})
+
+@app.route('/api/agent/ban', methods=['POST'])
+def api_agent_ban():
+    data = request.get_json(silent=True) or {}
+    slot = int(data.get("slot") or 1)
+    champion_id, champion_name = resolver_campeon(data.get("champion"))
+    if slot not in (1, 2):
+        return jsonify({"ok": False, "error": "slot invalido"}), 400
+    if not champion_id:
+        return jsonify({"ok": False, "error": "campeon no encontrado"}), 404
+
+    config = cargar_config()
+    config["bans"][f"ban{slot}"] = champion_id
+    guardar_config(config)
+    registrar_evento("ban_configured", f"Ban {slot}: {champion_name}.", {"slot": slot, "champion_id": champion_id})
+    return jsonify({"ok": True, "slot": slot, "champion_id": champion_id, "champion": champion_name})
+
+@app.route('/api/agent/pick', methods=['POST'])
+def api_agent_pick():
+    data = request.get_json(silent=True) or {}
+    role = normalizar_rol_usuario(data.get("role"))
+    champion_id, champion_name = resolver_campeon(data.get("champion"))
+    if role not in ("TOP", "JGL", "MID", "ADC", "SUP"):
+        return jsonify({"ok": False, "error": "rol invalido"}), 400
+    if not champion_id:
+        return jsonify({"ok": False, "error": "campeon no encontrado"}), 404
+
+    config = cargar_config()
+    config["picks"][role] = champion_id
+    guardar_config(config)
+    registrar_evento("pick_configured", f"Pick {role}: {champion_name}.", {"role": role, "champion_id": champion_id})
+    return jsonify({"ok": True, "role": role, "champion_id": champion_id, "champion": champion_name})
+
+@app.route('/api/agent/config-summary', methods=['GET'])
+def api_agent_config_summary():
+    config = cargar_config()
+    bans = {
+        key: {"id": value, "name": _champion_name(value)}
+        for key, value in config.get("bans", {}).items()
+        if value
+    }
+    picks = {
+        key: {"id": value, "name": _champion_name(value)}
+        for key, value in config.get("picks", {}).items()
+        if value
+    }
+    return jsonify({"ok": True, "bans": bans, "picks": picks, "insta_accept": web_config["velocidad_maxima"]})
+
 CHAMPIONS_HARDCODED = [
     {"id": 1, "name": "Annie"}, {"id": 2, "name": "Olaf"}, {"id": 3, "name": "Galio"}, {"id": 4, "name": "Twisted Fate"},
     {"id": 5, "name": "Xin Zhao"}, {"id": 6, "name": "Urgot"}, {"id": 7, "name": "LeBlanc"}, {"id": 8, "name": "Vladimir"},
@@ -831,6 +1033,7 @@ def api_champions():
 
 _CHAMPION_NAMES_BY_ID = {c["id"]: c["name"] for c in CHAMPIONS_HARDCODED}
 _champion_names_loaded_from_lcu = False
+_champion_names_loaded_from_ddragon = False
 
 def _refresh_champion_names_from_lcu():
     global _champion_names_loaded_from_lcu
@@ -857,11 +1060,93 @@ def _refresh_champion_names_from_lcu():
     except Exception:
         pass
 
+def _refresh_champion_names_from_ddragon():
+    global _champion_names_loaded_from_ddragon
+
+    if _champion_names_loaded_from_ddragon:
+        return
+
+    try:
+        version_response = requests.get("https://ddragon.leagueoflegends.com/api/versions.json", timeout=6)
+        version_response.raise_for_status()
+        version = version_response.json()[0]
+        champion_response = requests.get(
+            f"https://ddragon.leagueoflegends.com/cdn/{version}/data/en_US/champion.json",
+            timeout=8,
+        )
+        champion_response.raise_for_status()
+        for champion in champion_response.json().get("data", {}).values():
+            champion_id = champion.get("key")
+            name = champion.get("name")
+            if champion_id and str(champion_id).isdigit() and name:
+                _CHAMPION_NAMES_BY_ID[int(champion_id)] = name
+        _champion_names_loaded_from_ddragon = True
+    except Exception as e:
+        logger.warning(f"[Champions] No se pudo cargar Data Dragon: {e}")
+
 def _champion_name(champion_id):
     if not champion_id:
         return None
     _refresh_champion_names_from_lcu()
+    _refresh_champion_names_from_ddragon()
     return _CHAMPION_NAMES_BY_ID.get(champion_id, f"Champion {champion_id}")
+
+def _normalizar_nombre_campeon(value):
+    value = str(value or "").lower()
+    value = value.replace("&", "and")
+    return "".join(ch for ch in value if ch.isalnum())
+
+def resolver_campeon(value):
+    if value is None:
+        return None, None
+    if isinstance(value, (int, float)) or str(value).isdigit():
+        champion_id = int(value)
+        return champion_id, _champion_name(champion_id)
+
+    _refresh_champion_names_from_lcu()
+    _refresh_champion_names_from_ddragon()
+    target = _normalizar_nombre_campeon(value)
+    for champion_id, name in _CHAMPION_NAMES_BY_ID.items():
+        if _normalizar_nombre_campeon(name) == target:
+            return champion_id, name
+
+    aliases = {
+        "wukong": "monkeyking",
+        "nunu": "nunuandwillump",
+        "drmundo": "drmundo",
+        "jarvaniv": "jarvaniv",
+        "ksante": "ksante",
+        "chogath": "chogath",
+        "khazix": "khazix",
+        "kogmaw": "kogmaw",
+        "kaisa": "kaisa",
+        "reksai": "reksai",
+        "velkoz": "velkoz",
+    }
+    alias_target = aliases.get(target, target)
+    for champion_id, name in _CHAMPION_NAMES_BY_ID.items():
+        if _normalizar_nombre_campeon(name) == alias_target:
+            return champion_id, name
+    return None, None
+
+def normalizar_rol_usuario(role):
+    aliases = {
+        "TOP": "TOP",
+        "JGL": "JGL",
+        "JG": "JGL",
+        "JUNGLE": "JGL",
+        "JUNGLA": "JGL",
+        "MID": "MID",
+        "MIDDLE": "MID",
+        "ADC": "ADC",
+        "BOT": "ADC",
+        "BOTTOM": "ADC",
+        "SUP": "SUP",
+        "SUPP": "SUP",
+        "SUPPORT": "SUP",
+        "UTILITY": "SUP",
+    }
+    return aliases.get(str(role or "").strip().upper())
 
 def _normalize_position(position):
     aliases = {
@@ -921,6 +1206,11 @@ def _generar_recomendacion_basica(context):
             "context": context,
         }
 
+    mobalytics = _obtener_build_mobalytics(context)
+    if mobalytics.get("ok"):
+        mobalytics["context"] = context
+        return mobalytics
+
     notes = []
     if opponent:
         notes.append(f"Matchup detectado: {champion} {role or ''} vs {opponent}.")
@@ -929,7 +1219,8 @@ def _generar_recomendacion_basica(context):
     else:
         notes.append("Aun no hay enemigos visibles para adaptar la build.")
 
-    notes.append("Provider meta pendiente: esta respuesta confirma el flujo, falta conectar una fuente real de builds.")
+    if mobalytics.get("error"):
+        notes.append(f"Mobalytics no respondio una build utilizable: {mobalytics['error']}.")
     notes.append("Regla base: prioriza botas defensivas contra mucho CC/AD/AP y anti-heal si ves curacion fuerte.")
 
     return {
@@ -944,6 +1235,256 @@ def _generar_recomendacion_basica(context):
         "context": context,
     }
 
+def _obtener_build_mobalytics(context):
+    local_player = context.get("local_player") or {}
+    champion = local_player.get("champion")
+    role = local_player.get("position")
+    opponent = (context.get("lane_opponent") or {}).get("champion")
+
+    if not champion:
+        return {"ok": False, "error": "sin campeon detectado"}
+
+    role_mobalytics = _rol_mobalytics(role)
+    game_mode = _modo_mobalytics(context)
+    last_error = None
+
+    for slug in _mobalytics_slug_candidates(champion):
+        try:
+            raw = _consultar_mobalytics(slug, role_mobalytics, game_mode)
+            build = (((raw.get("data") or {}).get("lol") or {}).get("champion") or {}).get("build")
+            stats = (((raw.get("data") or {}).get("lol") or {}).get("champion") or {}).get("stats") or {}
+            if build:
+                return _formatear_build_mobalytics(build, stats, champion, role, opponent, context)
+            last_error = f"sin build para slug {slug}"
+        except Exception as e:
+            last_error = str(e)
+
+    return {"ok": False, "error": last_error or "sin respuesta"}
+
+def _consultar_mobalytics(champion_slug, role, game_mode):
+    headers = {
+        "Content-Type": "application/json",
+        "Accept-Language": "en_us",
+        "Authorization": f"Bearer {MOBALYTICS_WIDGET_TOKEN}",
+    }
+    variables = {
+        "champion": champion_slug,
+        "role": role,
+        "patch": None,
+        "region": "ALL",
+        "buildID": None,
+        "buildType": "RECOMMENDED",
+        "gameMode": game_mode,
+    }
+    response = requests.post(
+        MOBALYTICS_GQL_URL,
+        headers=headers,
+        json={"query": MOBALYTICS_DYNAMIC_BUILD_QUERY, "variables": variables},
+        timeout=8,
+    )
+    response.raise_for_status()
+    data = response.json()
+    if data.get("errors"):
+        raise RuntimeError(data["errors"][0].get("message", "error GraphQL"))
+    return data
+
+def _formatear_build_mobalytics(build, stats, champion, role, opponent, context):
+    ddragon = _obtener_datadragon()
+    items = _formatear_items_mobalytics(build.get("items") or [], ddragon["items"])
+    spells = [_nombre_o_id(ddragon["summoners"], sid) for sid in build.get("spells") or []]
+    runes = [_nombre_o_id(ddragon["runes"], rid) for rid in (build.get("perks") or {}).get("IDs") or []]
+    skill_order = [_skill_key(idx) for idx in build.get("skillOrder") or []]
+    skill_max_order = [_skill_key(idx) for idx in build.get("skillMaxOrder") or []]
+
+    wins = (build.get("stats") or {}).get("wins")
+    match_count = (build.get("stats") or {}).get("matchCount")
+    winrate = round(wins * 100 / match_count, 1) if wins and match_count else None
+
+    notes = [
+        f"Fuente: Mobalytics {build.get('type') or 'build'} patch {build.get('patch') or 'actual'}.",
+    ]
+    if winrate:
+        notes.append(f"Winrate de la build: {winrate}% en {match_count} partidas.")
+    if opponent:
+        notes.append(f"Matchup detectado: {champion} {role or ''} vs {opponent}.")
+    else:
+        notes.append("No detecte rival de linea; uso build recomendada general por campeon/rol.")
+    notes.extend(_notas_situacionales(context))
+
+    return {
+        "ok": True,
+        "source": "mobalytics",
+        "champion": champion,
+        "role": role or build.get("role"),
+        "opponent": opponent,
+        "queue": context.get("queue"),
+        "patch": build.get("patch"),
+        "tier": stats.get("tier"),
+        "winrate": winrate,
+        "games": match_count,
+        "spells": spells,
+        "items": items,
+        "runes": runes,
+        "skill_order": skill_order,
+        "skill_max_order": skill_max_order,
+        "notes": notes,
+    }
+
+def _formatear_items_mobalytics(item_groups, item_names):
+    formatted = []
+    for group in item_groups:
+        item_ids = group.get("items") or []
+        names = [_nombre_o_id(item_names, item_id) for item_id in item_ids]
+        if names:
+            formatted.append({"type": group.get("type") or "Items", "items": names})
+    return formatted
+
+def _obtener_datadragon():
+    if _ddragon_cache["items"] and time.time() - _ddragon_cache["loaded_at"] < 86400:
+        return _ddragon_cache
+
+    try:
+        version_response = requests.get("https://ddragon.leagueoflegends.com/api/versions.json", timeout=6)
+        version_response.raise_for_status()
+        version = version_response.json()[0]
+
+        item_response = requests.get(
+            f"https://ddragon.leagueoflegends.com/cdn/{version}/data/en_US/item.json",
+            timeout=8,
+        )
+        summoner_response = requests.get(
+            f"https://ddragon.leagueoflegends.com/cdn/{version}/data/en_US/summoner.json",
+            timeout=8,
+        )
+        runes_response = requests.get(
+            f"https://ddragon.leagueoflegends.com/cdn/{version}/data/en_US/runesReforged.json",
+            timeout=8,
+        )
+        item_response.raise_for_status()
+        summoner_response.raise_for_status()
+        runes_response.raise_for_status()
+
+        _ddragon_cache.update({
+            "loaded_at": time.time(),
+            "version": version,
+            "items": {int(k): v.get("name", k) for k, v in item_response.json().get("data", {}).items()},
+            "summoners": {
+                int(v.get("key")): v.get("name", v.get("key"))
+                for v in summoner_response.json().get("data", {}).values()
+                if str(v.get("key", "")).isdigit()
+            },
+            "runes": _flatten_runes(runes_response.json()),
+        })
+    except Exception as e:
+        logger.warning(f"[BestBuild] No se pudo cargar Data Dragon: {e}")
+
+    return _ddragon_cache
+
+def _flatten_runes(paths):
+    runes = {}
+    for path in paths:
+        if path.get("id"):
+            runes[int(path["id"])] = path.get("name", str(path["id"]))
+        for slot in path.get("slots", []):
+            for rune in slot.get("runes", []):
+                if rune.get("id"):
+                    runes[int(rune["id"])] = rune.get("name", str(rune["id"]))
+    runes.update({
+        5008: "Adaptive Force",
+        5005: "Attack Speed",
+        5007: "Ability Haste",
+        5002: "Armor",
+        5003: "Magic Resist",
+        5001: "Health Scaling",
+    })
+    return runes
+
+def _nombre_o_id(dictionary, value):
+    if value is None:
+        return None
+    return dictionary.get(int(value), str(value)) if str(value).isdigit() else str(value)
+
+def _skill_key(index):
+    return {1: "Q", 2: "W", 3: "E", 4: "R"}.get(index, str(index))
+
+def _rol_mobalytics(role):
+    return {
+        "TOP": "TOP",
+        "JGL": "JUNGLE",
+        "MID": "MID",
+        "ADC": "ADC",
+        "SUP": "SUPPORT",
+    }.get(role or "", None)
+
+def _modo_mobalytics(context):
+    mode = (context.get("mode") or "").upper()
+    queue = (context.get("queue") or "").upper()
+    if "ARAM" in mode or "ARAM" in queue:
+        return "ARAM"
+    if "ARENA" in mode or "ARENA" in queue:
+        return "ARENA"
+    return "SUMMONER_RIFT"
+
+def _mobalytics_slug_candidates(champion_name):
+    base = _slugify_mobalytics(champion_name)
+    aliases = {
+        "aurelion-sol": ["aurelionsol"],
+        "belveth": ["belveth"],
+        "chogath": ["chogath"],
+        "dr-mundo": ["drmundo"],
+        "jarvan-iv": ["jarvaniv"],
+        "kaisa": ["kaisa"],
+        "khazix": ["khazix"],
+        "ksante": ["ksante"],
+        "kogmaw": ["kogmaw"],
+        "leblanc": ["leblanc"],
+        "lee-sin": ["leesin"],
+        "master-yi": ["masteryi"],
+        "miss-fortune": ["missfortune"],
+        "nunu-willump": ["nunu"],
+        "reksai": ["reksai"],
+        "renata-glasc": ["renata"],
+        "tahm-kench": ["tahmkench"],
+        "twisted-fate": ["twistedfate"],
+        "velkoz": ["velkoz"],
+        "wukong": ["monkeyking"],
+        "xin-zhao": ["xinzhao"],
+    }
+    candidates = [base] + aliases.get(base, [])
+    compact = base.replace("-", "")
+    if compact not in candidates:
+        candidates.append(compact)
+    return list(dict.fromkeys(candidates))
+
+def _slugify_mobalytics(name):
+    normalized = name.lower()
+    normalized = normalized.replace("&", " ")
+    normalized = normalized.replace(".", "")
+    normalized = normalized.replace("'", "")
+    normalized = normalized.replace("’", "")
+    chars = []
+    last_dash = False
+    for ch in normalized:
+        if ch.isalnum():
+            chars.append(ch)
+            last_dash = False
+        elif not last_dash:
+            chars.append("-")
+            last_dash = True
+    return "".join(chars).strip("-")
+
+def _notas_situacionales(context):
+    enemies = " ".join(p.get("champion") or "" for p in context.get("enemies", []))
+    notes = []
+    healing_names = ("Aatrox", "Soraka", "Yuumi", "Vladimir", "Warwick", "Dr. Mundo", "Briar", "Nami", "Sona")
+    if any(name in enemies for name in healing_names):
+        notes.append("Situacional: considera anti-heal si la curacion enemiga empieza a pesar.")
+    if any(name in enemies for name in ("Zed", "Talon", "Qiyana", "Yasuo", "Yone", "Naafiri")):
+        notes.append("Situacional: contra asesinos AD, valora armadura temprana o item defensivo antes de codiciar dano.")
+    if any(name in enemies for name in ("Leona", "Nautilus", "Morgana", "Lissandra", "Sejuani", "Amumu")):
+        notes.append("Situacional: si el CC enemigo manda, Mercurial/Mercs o tenacidad suben mucho de valor.")
+    return notes
+
 def get_local_ip():
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -953,6 +1494,15 @@ def get_local_ip():
         return ip if ip and not ip.startswith("127.") else None
     except Exception:
         return None
+
+def puerto_disponible(host, puerto):
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            s.bind((host, puerto))
+        return True
+    except OSError:
+        return False
 
 def iniciar_servidor_web():
     logging.getLogger('werkzeug').disabled = True
@@ -964,6 +1514,8 @@ def iniciar_servidor_web():
         print(f"[Web] Intentando 0.0.0.0 en puertos 5000-5010...")
         for puerto in range(5000, 5011):
             try:
+                if not puerto_disponible("0.0.0.0", puerto):
+                    continue
                 web_info["url"] = f"http://{ip_local}:{puerto}"
                 print(f"[Web] ✓ Escuchando en 0.0.0.0:{puerto}")
                 print(f"[Web] Accede desde celular: {web_info['url']}\n")
@@ -978,6 +1530,8 @@ def iniciar_servidor_web():
     print(f"[Web] Fallback a 127.0.0.1...")
     for puerto in range(5000, 5011):
         try:
+            if not puerto_disponible("127.0.0.1", puerto):
+                continue
             web_info["url"] = f"http://127.0.0.1:{puerto}"
             print(f"[Web] ✓ Escuchando en 127.0.0.1:{puerto} (solo localhost)\n")
             app.run(host='127.0.0.1', port=puerto, debug=False, use_reloader=False, threaded=True)
@@ -1121,7 +1675,7 @@ def esperar_decision_usuario():
             logger.info("Accion desde web: RECHAZAR")
             return False
 
-        if msvcrt.kbhit():
+        if msvcrt and msvcrt.kbhit():
             tecla = msvcrt.getch()
             if tecla in (b'\x00', b'\xe0'):
                 msvcrt.getch()
@@ -1149,10 +1703,12 @@ def _on_partida_detectada():
     estado_partida["estado"] = "Partida encontrada - Esperando decision"
     estado_partida["encontrada"] = True
     estado_partida["bloqueo_aceptacion"] = True
+    registrar_evento("ready_check_found", "Partida encontrada. Esperando decision o auto-accept.", {"attempt": intento})
 
 def _on_aceptacion_ok():
     logger.info("Partida aceptada.")
     estado_partida["estado"] = "Partida aceptada - Esperando confirmacion"
+    registrar_evento("accepted", "Partida aceptada.")
 
 def _on_aceptacion_error(detalle):
     logger.warning(f"Error al aceptar ({detalle}). Reintentando...")
@@ -1161,6 +1717,7 @@ def _on_aceptacion_error(detalle):
 def _on_rechazo():
     logger.info("Partida rechazada.")
     estado_partida["estado"] = "Partida rechazada"
+    registrar_evento("declined", "Partida rechazada.")
     estado_partida.update({
         "encontrada": False,
         "intentos_partida_actual": 0,
@@ -1209,6 +1766,7 @@ def evaluar_estado_matchmaking(estado, respuesta_jugador):
 # Helpers para lobby y champ-select
 # ==========================================
 def _actualizar_fase(fase):
+    fase_anterior = estado_partida.get("fase")
     estado_partida["fase"] = fase
     if fase == "Lobby":
         estado_partida["estado"] = "En lobby"
@@ -1216,12 +1774,17 @@ def _actualizar_fase(fase):
         estado_partida["estado"] = "En cola"
     elif fase == "ChampSelect":
         estado_partida["estado"] = "Selección de campeones"
+        if fase_anterior != "ChampSelect":
+            registrar_evento("champ_select_started", "Champ select iniciado.")
+    elif fase == "InProgress":
+        if fase_anterior != "InProgress":
+            registrar_evento("game_started", "Entraste a partida.")
     elif fase not in ("ReadyCheck", "InProgress"):
         _resetear_estado_lobby()
 
 def _resetear_estado_lobby():
     estado_partida.update({"miembros_lobby": [], "posiciones": None, "modo_juego": None})
-    champ_select_state.update({"local_cell_id": None, "action_id_ban": None})
+    champ_select_state.update({"local_cell_id": None, "action_id_ban": None, "action_id_pick": None})
     bestbuild_state.update({
         "updated_at": None,
         "phase": estado_partida.get("fase"),
@@ -1297,6 +1860,17 @@ def _detectar_turno_ban(data):
                 return action["id"]
     return None
 
+def _detectar_turno_pick(data):
+    local_cell = data.get("localPlayerCellId")
+    for grupo in data.get("actions", []):
+        for action in grupo:
+            if (action.get("type") == "pick"
+                    and action.get("actorCellId") == local_cell
+                    and action.get("isInProgress") is True
+                    and not action.get("completed", True)):
+                return action["id"]
+    return None
+
 def _elegir_campeon_ban(data):
     bans = data.get("bans", {})
     ya_baneados = set(bans.get("myTeamBans", []) + bans.get("theirTeamBans", []))
@@ -1306,6 +1880,23 @@ def _elegir_campeon_ban(data):
         if cid and cid not in ya_baneados:
             return cid
     return None
+
+def _elegir_campeon_pick(data):
+    local_cell = data.get("localPlayerCellId")
+    local_player = next((p for p in data.get("myTeam", []) if p.get("cellId") == local_cell), {})
+    if local_player.get("championId"):
+        return None
+    role = _normalize_position(local_player.get("assignedPosition"))
+    config = cargar_config()
+    champion_id = config.get("picks", {}).get(role or "", 0)
+    if not champion_id:
+        return None
+    bans = data.get("bans", {})
+    banned = set(bans.get("myTeamBans", []) + bans.get("theirTeamBans", []))
+    picked = {p.get("championId") for p in data.get("myTeam", []) + data.get("theirTeam", []) if p.get("championId")}
+    if champion_id in banned or champion_id in picked:
+        return None
+    return champion_id
 
 async def _ejecutar_ban_ws(connection, action_id, champion_id):
     if estado_partida["ban_en_progreso"]:
@@ -1317,6 +1908,7 @@ async def _ejecutar_ban_ws(connection, action_id, champion_id):
             data={"championId": champion_id, "completed": True})
         if r.status in (200, 204):
             logger.info(f"[AutoBan] Campeón ID {champion_id} baneado.")
+            registrar_evento("ban_done", f"Baneé {_champion_name(champion_id)}.", {"champion_id": champion_id})
         else:
             logger.warning(f"[AutoBan] Error HTTP {r.status} al banear.")
     except Exception as e:
@@ -1334,6 +1926,7 @@ def _ejecutar_ban_polling(session, port, action_id, champion_id):
             json={"championId": champion_id, "completed": True}, timeout=3)
         if r.status_code in (200, 204):
             logger.info(f"[AutoBan] Campeón ID {champion_id} baneado.")
+            registrar_evento("ban_done", f"Baneé {_champion_name(champion_id)}.", {"champion_id": champion_id})
         else:
             logger.warning(f"[AutoBan] Error HTTP {r.status_code} al banear.")
     except Exception as e:
@@ -1341,10 +1934,51 @@ def _ejecutar_ban_polling(session, port, action_id, champion_id):
     finally:
         estado_partida["ban_en_progreso"] = False
 
+async def _ejecutar_pick_ws(connection, action_id, champion_id):
+    if estado_partida["pick_en_progreso"]:
+        return
+    estado_partida["pick_en_progreso"] = True
+    try:
+        r = await connection.request('patch',
+            f'/lol-champ-select/v1/session/actions/{action_id}',
+            data={"championId": champion_id, "completed": True})
+        if r.status in (200, 204):
+            logger.info(f"[AutoPick] Campeón ID {champion_id} pickeado.")
+            registrar_evento("pick_done", f"Pickeé {_champion_name(champion_id)}.", {"champion_id": champion_id})
+        else:
+            logger.warning(f"[AutoPick] Error HTTP {r.status} al pickear.")
+    except Exception as e:
+        logger.warning(f"[AutoPick] Error: {e}")
+    finally:
+        estado_partida["pick_en_progreso"] = False
+
+def _ejecutar_pick_polling(session, port, action_id, champion_id):
+    if estado_partida["pick_en_progreso"]:
+        return
+    estado_partida["pick_en_progreso"] = True
+    try:
+        r = session.patch(
+            f"https://127.0.0.1:{port}/lol-champ-select/v1/session/actions/{action_id}",
+            json={"championId": champion_id, "completed": True}, timeout=3)
+        if r.status_code in (200, 204):
+            logger.info(f"[AutoPick] Campeón ID {champion_id} pickeado.")
+            registrar_evento("pick_done", f"Pickeé {_champion_name(champion_id)}.", {"champion_id": champion_id})
+        else:
+            logger.warning(f"[AutoPick] Error HTTP {r.status_code} al pickear.")
+    except Exception as e:
+        logger.warning(f"[AutoPick] Error: {e}")
+    finally:
+        estado_partida["pick_en_progreso"] = False
+
 
 # ==========================================
 # Nivel 1: lcu-driver (WebSocket, deteccion automatica)
 # ==========================================
+try:
+    asyncio.get_event_loop()
+except RuntimeError:
+    asyncio.set_event_loop(asyncio.new_event_loop())
+
 connector = Connector()
 
 @connector.ready
@@ -1352,6 +1986,7 @@ async def connect(connection):
     logger.info("✓ Cliente conectado (lcu-driver + WebSocket)")
     estado_partida["estado"] = "Buscando partida"
     estado_partida["nivel_conexion"] = "lcu-driver + WebSocket"
+    registrar_evento("agent_online", "AutoQueue conectado al cliente de LoL.")
     try:
         if hasattr(connection, 'port'):
             lcu_conn["port"] = connection.port
@@ -1431,6 +2066,11 @@ async def _polling_lobby_loop(connection):
                     champion_id = _elegir_campeon_ban(data)
                     if champion_id:
                         await _ejecutar_ban_ws(connection, action_id, champion_id)
+                pick_action_id = _detectar_turno_pick(data)
+                if pick_action_id:
+                    champion_id = _elegir_campeon_pick(data)
+                    if champion_id:
+                        await _ejecutar_pick_ws(connection, pick_action_id, champion_id)
         except Exception as e:
             logger.error(f"[Polling ChampSelect] Error: {e}")
 
@@ -1439,6 +2079,7 @@ async def disconnect(connection):
     logger.info("Cliente cerrado.")
     estado_partida["estado"] = "Cliente cerrado"
     estado_partida.update({"encontrada": False, "intentos_partida_actual": 0})
+    registrar_evento("agent_offline", "Cliente de LoL cerrado.")
 
 @connector.ws.register('/lol-gameflow/v1/gameflow-phase', event_types=('UPDATE',))
 async def on_gameflow_phase(connection, event):
@@ -1475,6 +2116,12 @@ async def on_champ_select(connection, event):
             if champion_id:
                 logger.info(f"[Ban Auto] Baneando {champion_id}")
                 await _ejecutar_ban_ws(connection, action_id, champion_id)
+        pick_action_id = _detectar_turno_pick(data)
+        if pick_action_id:
+            champion_id = _elegir_campeon_pick(data)
+            if champion_id:
+                logger.info(f"[Pick Auto] Pickeando {champion_id}")
+                await _ejecutar_pick_ws(connection, pick_action_id, champion_id)
     except Exception as e:
         logger.debug(f"[ChampSelect] Error: {e}")
 
@@ -1521,6 +2168,11 @@ def _poll_champ_select(session, port):
                 champion_id = _elegir_campeon_ban(data)
                 if champion_id:
                     _ejecutar_ban_polling(session, port, action_id, champion_id)
+            pick_action_id = _detectar_turno_pick(data)
+            if pick_action_id:
+                champion_id = _elegir_campeon_pick(data)
+                if champion_id:
+                    _ejecutar_pick_polling(session, port, pick_action_id, champion_id)
     except Exception:
         pass
 
@@ -1553,6 +2205,7 @@ def iniciar_modo_polling(lockfile_path):
             estado_partida["estado"] = "Buscando partida (polling)"
             lcu_conn["port"] = port
             lcu_conn["token"] = datos['token']
+            registrar_evento("agent_online", "AutoQueue conectado al cliente de LoL.")
 
             _t_fase = _t_lobby = _t_cs = 0.0
 
@@ -1561,6 +2214,7 @@ def iniciar_modo_polling(lockfile_path):
                     logger.warning("Lockfile eliminado. Cliente cerrado.")
                     estado_partida["estado"] = "Cliente cerrado"
                     estado_partida.update({"encontrada": False, "intentos_partida_actual": 0})
+                    registrar_evento("agent_offline", "Cliente de LoL cerrado.")
                     break
 
                 try:

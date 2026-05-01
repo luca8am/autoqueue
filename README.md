@@ -41,20 +41,25 @@ Al iniciar el script, verás un mensaje como este en la consola:
 
 Solo tienes que entrar a esa dirección desde cualquier dispositivo conectado a tu misma red Wi-Fi (celular, tablet, otra PC) para ver el estado de tu cola en tiempo real.
 
-## 🤖 Bot BestBuild por WhatsApp
+## 🤖 Bot BestBuild por Telegram
 
-La rama `bot-bestbuild` incluye un primer bot personal con Baileys en `whatsapp-bot/`.
+La rama `bot-bestbuild` incluye un bot personal de Telegram en `telegram_bot.py`.
 
 1. Ejecuta AutoQueue normalmente.
-2. En otra consola:
+2. Crea `telegram_config.json` a partir de `telegram_config.example.json` y pega ahi el token de BotFather.
+3. En otra consola:
    ```bash
-   cd whatsapp-bot
-   npm install
-   npm start
+   py telegram_bot.py
    ```
-3. Escanea el QR con WhatsApp y envia `build`.
+4. En Telegram, enviale `/build` o `build` al bot.
 
-Por ahora el bot consulta el contexto de champ select local y responde con una recomendacion basica. Falta conectar un proveedor real de builds meta.
+El bot consulta el contexto de champ select local y pide una build recomendada a Mobalytics. Data Dragon se usa para traducir IDs de items, runas y summoner spells a nombres legibles.
+
+Opcionalmente puedes limitar los chats autorizados:
+
+```bash
+set TELEGRAM_ALLOWED_CHAT_IDS=123456789,987654321
+```
 
 ---
 

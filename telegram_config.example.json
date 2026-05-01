@@ -1,0 +1,5 @@
+{
+  "bot_token": "123456789:REEMPLAZAR_POR_TOKEN_DE_BOTFATHER",
+  "autoqueue_base_url": "http://127.0.0.1:5000",
+  "allowed_chat_ids": []
+}

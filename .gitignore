@@ -106,6 +106,7 @@ ipython_config.py
 # runtime-config
 #   For projects using dotenv, you might want to ignore the .env file if it contains secrets
 .env
+.env.*
 .venv
 env/
 venv/
@@ -138,11 +139,21 @@ dmypy.json
 cython_debug/
 
 # IDE files
+.DS_Store
 .vscode/
 .idea/
 *.swp
 *.swo
+telegram_config.json
+telegram_config.*.json
+!telegram_config.example.json
+autoqueue_config.local.json
+*.local.json
 
-# Node / WhatsApp bot
-node_modules/
-whatsapp-bot/auth/
+# Local runtime artifacts
+*.pid
+*.sqlite
+*.sqlite3
+*.db
+logs/
+tmp/

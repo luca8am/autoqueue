@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>AutoQueue BestBuild</title>
+    <meta name="description" content="Control remoto del cliente de League desde Telegram: autoaccept, picks, bans y builds recomendadas.">
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+    <link rel="preload" href="/assets/hero-bestbuild.png" as="image">
+    <link rel="stylesheet" href="/styles.css">
+    <script src="/site-config.js"></script>
+  </head>
+  <body>
+    <header class="topbar" aria-label="Navegacion principal">
+      <a class="brand" href="#top" aria-label="AutoQueue BestBuild inicio">
+        <span class="brand-mark" aria-hidden="true"></span>
+        <span>AutoQueue BestBuild</span>
+      </a>
+      <nav class="nav-links" aria-label="Secciones">
+        <a href="#como-funciona">Como funciona</a>
+        <a href="#instalar">Instalar</a>
+        <a href="#comandos">Comandos</a>
+      </nav>
+    </header>
+
+    <main id="top">
+      <section class="hero" aria-labelledby="hero-title">
+        <div class="hero-media" aria-hidden="true"></div>
+        <div class="hero-shade" aria-hidden="true"></div>
+        <div class="hero-content">
+          <p class="eyebrow">Control remoto del cliente + builds por Telegram</p>
+          <h1 id="hero-title">AutoQueue BestBuild</h1>
+          <p class="hero-copy">
+            Acepta partidas, rechaza ready checks, maneja insta-accept, prepara bans y picks, y recibe la build recomendada sin volver a la PC hasta que entres a partida.
+          </p>
+          <div class="hero-actions">
+            <a class="button primary" data-bot-link href="https://t.me/YOUR_BOT_USERNAME">Abrir bot</a>
+            <a class="button secondary" data-download-link href="https://github.com/luca8am/autoqueue/releases/latest/download/AutoQueue-Agent.exe">Descargar agente</a>
+          </div>
+          <div class="hero-meta" aria-label="Resumen de disponibilidad">
+            <span>Autoaccept remoto</span>
+            <span>Pick y ban desde el celular</span>
+            <span>Builds por matchup</span>
+          </div>
+          <div class="control-strip" aria-label="Controles principales">
+            <span>Accept</span>
+            <span>Reject</span>
+            <span>Insta</span>
+            <span>Ban</span>
+            <span>Pick</span>
+            <span>Build</span>
+          </div>
+        </div>
+      </section>
+
+      <section class="section intro" id="como-funciona" aria-labelledby="flow-title">
+        <div class="section-header">
+          <p class="eyebrow">Antes de entrar a partida</p>
+          <h2 id="flow-title">Todo el pre-game desde el celular</h2>
+        </div>
+        <div class="flow-grid">
+          <article class="feature-card">
+            <div class="feature-index">01</div>
+            <h3>Ready check bajo control</h3>
+            <p>Acepta o rechaza desde Telegram, activa insta-accept cuando estas lejos y consulta el estado del cliente sin mirar la PC.</p>
+          </article>
+          <article class="feature-card">
+            <div class="feature-index">02</div>
+            <h3>Pick y ban preparados</h3>
+            <p>El agente lee lobby y champ select. Podes guardar bans, revisar roles y resolver tu pick antes de que arranque la partida.</p>
+          </article>
+          <article class="feature-card">
+            <div class="feature-index">03</div>
+            <h3>Build al instante</h3>
+            <p>Cuando ya hay pick, <code>/build</code> usa tu campeon, rol y matchup visible para responder items, runas, spells y max order.</p>
+          </article>
+        </div>
+      </section>
+
+      <section class="section install-band" id="instalar" aria-labelledby="install-title">
+        <div class="install-copy">
+          <p class="eyebrow">Para controlar el cliente</p>
+          <h2 id="install-title">Instala el agente en la PC donde jugas</h2>
+          <p>
+            El bot deployado puede recomendar builds por texto. Para aceptar partidas, ver champ select, configurar bans y detectar picks automaticamente, el agente tiene que correr localmente junto al cliente de League.
+          </p>
+        </div>
+        <div class="install-actions">
+          <a class="button primary dark" data-download-link href="https://github.com/luca8am/autoqueue/releases/latest/download/AutoQueue-Agent.exe">Descargar .exe</a>
+          <a class="text-link" data-release-link href="https://github.com/luca8am/autoqueue/releases/latest">Ver releases</a>
+        </div>
+      </section>
+
+      <section class="section command-section" id="comandos" aria-labelledby="commands-title">
+        <div class="section-header">
+          <p class="eyebrow">Comandos esperados</p>
+          <h2 id="commands-title">Telegram como panel principal</h2>
+        </div>
+        <div class="command-layout">
+          <div class="terminal-panel" aria-label="Ejemplos de comandos">
+            <div class="terminal-bar">
+              <span></span><span></span><span></span>
+            </div>
+            <pre><code>/build ahri mid vs zed
+/build
+/status
+/insta_on
+/insta_off
+/accept
+/reject
+/setban zed
+/setpick ahri mid</code></pre>
+          </div>
+          <div class="response-preview" aria-label="Ejemplo de respuesta">
+            <p class="preview-label">Respuesta</p>
+            <h3>Ahri MID vs Zed</h3>
+            <p class="preview-stat">Patch 16.9 | Tier S | 51.8% WR</p>
+            <dl>
+              <div>
+                <dt>Core</dt>
+                <dd>Malignance > Sorcerer's Shoes > Shadowflame</dd>
+              </div>
+              <div>
+                <dt>Runas</dt>
+                <dd>Electrocute / Taste of Blood / Ultimate Hunter</dd>
+              </div>
+              <div>
+                <dt>Max</dt>
+                <dd>Q > W > E</dd>
+              </div>
+            </dl>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <span>AutoQueue BestBuild</span>
+      <a data-bot-link href="https://t.me/YOUR_BOT_USERNAME">Abrir Telegram</a>
+    </footer>
+
+    <script>
+      const config = window.AUTOQUEUE_SITE_CONFIG || {};
+      const setHref = (selector, value) => {
+        if (!value) return;
+        document.querySelectorAll(selector).forEach((el) => {
+          el.href = value;
+        });
+      };
+      setHref("[data-bot-link]", config.botUrl);
+      setHref("[data-download-link]", config.downloadUrl);
+      setHref("[data-release-link]", config.releaseUrl);
+    </script>
+  </body>
+</html>
